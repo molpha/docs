@@ -1,0 +1,77 @@
+---
+title: "Rounds and Signatures"
+description: "One round produces one self-contained, threshold-signed payload that verifies on every chain."
+---
+
+A **round** is one coordination event: a deterministically selected subset of registered nodes independently fetches the job's API, converges on a canonical result, and signs it once — producing a single aggregate Schnorr signature. The output is a self-contained payload (`DataUpdate` + `AggregatedSig`) that verifies unmodified on Solana, EVM, and Starknet.
+
+## The round
+
+Each round is anchored by its `canonicalTimestamp` — the off-chain unix time (seconds) at which the value was produced. The timestamp is part of the signed message and is also an input to [node selection](/protocol/cryptography#node-selection), so it cannot be altered without invalidating the signature.
+
+Rounds are **pull-native** — they run on demand:
+
+```ts
+// Run a gateway round and submit the signed result to Solana, in one call
+const { result, signature } = await sdk.requestAndSubmit(jobId, { apiConfig });
+```
+
+Under the hood this is a gateway execution followed by a Solana submission:
+
+```ts
+const result = await sdk.gateway.requestSignedData({ jobId, apiConfig });
+const { signature } = await sdk.solana.submitDataUpdate(result);
+```
+
+The round runs against the **current on-chain registry version**; the resulting payload records which version it was signed under, and verifiers always check it against exactly that snapshot.
+
+## DataUpdate — the signed payload
+
+A `DataUpdate` is the signed result of one round. It is **self-contained**: everything verification needs is in the struct or derivable from it.
+
+| Field | Meaning |
+|---|---|
+| `jobId` | `keccak256("MOLPHA_JOB_V1" \|\| owner \|\| apiConfigHash)` — commits the payload to a specific job config |
+| `registryVersion` | The immutable node-set snapshot the signature was produced against |
+| `signaturesRequired` | The quorum threshold for this update |
+| `value` | The signed result — a 32-byte big-endian word, [encoding job-defined](/concepts/jobs#values-and-decoding) |
+| `canonicalTimestamp` | Off-chain unix time (seconds) the value was produced; also a node-selection input |
+
+The per-chain struct definitions (`DataUpdate` / `SchnorrSignature` in Solidity, Cairo, and Rust) live in each verifier reference: [Solana](/verifiers/solana), [EVM](/verifiers/evm#data-structures), [Starknet](/verifiers/starknet#data-structures).
+
+### The signed message
+
+The aggregate signature covers:
+
+```
+message = keccak256(abi.encodePacked(
+    MESSAGE_PREFIX,        // keccak256("MOLPHA_MESSAGE_V1")
+    jobId,
+    registryVersion,
+    signaturesRequired,
+    signersBitmap,
+    value,
+    canonicalTimestamp
+))
+```
+
+Two deliberate properties:
+
+- **`signersBitmap` is inside the message** — the exact signer set is bound into the signature, not chosen after the fact.
+- **No `chainId`** — the same signature is valid on every supported chain.
+
+## AggregatedSig — one signature from many signers
+
+Molpha uses **PoP-Schnorr aggregation over secp256k1**: plain-sum Schnorr with mandatory proof-of-possession at node registration. The aggregate verification key is always the plain elliptic-curve sum of the *actual signers'* keys — there are no MuSig2 delinearization coefficients and no global precomputed aggregate key. The full verification math is in [Cryptography](/protocol/cryptography).
+
+The signature payload carries three components — `signature` (the aggregate Schnorr scalar `s`), `commitment` (the Ethereum-style address of the nonce point `R`), and `signersBitmap`.
+
+### Signers bitmap
+
+Participation is a 256-bit bitmap: **bit `i-1` is set iff the 1-based node index `i` signed**. A registry holds at most 256 nodes, so one word always suffices. `popcount(signersBitmap)` is the signer count, which must be at least `signaturesRequired`.
+
+The bitmap is part of the signed message above — the signer set is committed by the signature itself, and every signer must additionally fall inside the deterministic [selection set](/protocol/cryptography#node-selection) for the round.
+
+## Consumption
+
+On Solana, the payload can be written to the job's `Feed` account via the permissionless `submit_data_update` instruction. A new value is only accepted if its `canonical_timestamp` is **strictly greater** than the stored one (monotonic freshness). On EVM and Starknet, your contract calls `verify()` and applies its own freshness policy. See the [guides](/guides/create-and-update) for each path.

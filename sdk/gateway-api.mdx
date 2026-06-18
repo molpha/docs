@@ -1,0 +1,53 @@
+---
+title: "Gateway API"
+description: "Run signing rounds and retrieve ready-to-submit payloads — via the SDK gateway client or the HTTP gateway directly."
+---
+
+The gateway accepts an execution request for a job, dispatches a signing round to the deterministically selected node set for the current registry version, and returns a completed [`DataUpdateResult`](/sdk/reference#dataupdateresult) — a payload ready to submit to any chain's verifier. The **recommended access path is the SDK gateway client** (`sdk.gateway`), which handles auth, context caching, and struct assembly.
+
+## `requestSignedData`
+
+```ts
+const result = await sdk.gateway.requestSignedData({ jobId, apiConfig });
+```
+
+Runs a round against the current on-chain registry version (or returns a cached result) and resolves with a [`DataUpdateResult`](/sdk/reference#dataupdateresult). `result.fresh` indicates whether the value was freshly fetched this round (`false` means the gateway served a cached result — no new round was executed).
+
+Execution is authenticated with an `authSig` produced by the wallet's `signAuthMessage`; keypair-backed wallets sign automatically. Without a signing-capable wallet the SDK falls back to an all-zero `authSig` — accepted on testnet for development only.
+
+## `prepareContext`
+
+```ts
+await sdk.gateway.prepareContext(jobId);
+```
+
+Caches the registry version, node set, and job config as a [`RoundContext`](/sdk/reference#roundcontext) so each subsequent `requestSignedData` call is a single gateway POST — use this for fast repeated rounds.
+
+## Response shape
+
+The flat `DataUpdateResult` maps 1:1 onto every chain's verifier structs via [`buildEvmVerifierArgs` / `buildStarknetVerifierArgs`](/sdk/reference), or directly into Solana's `SubmitDataUpdateArgs`:
+
+```ts
+{
+  jobId: string;
+  value: string;            // human-readable value
+  valuePacked: string;      // 32-byte packed value, hex
+  timestamp: number;        // canonicalTimestamp (seconds)
+  registryVersion: number;
+  signaturesRequired: number;
+  signersBitmap: string;    // 32-byte big-endian bitmap, hex
+  s: string;                // 32-byte Schnorr scalar, hex
+  commitmentAddr: string;   // 20-byte commitment address, hex
+  fresh: boolean;           // freshly fetched this round?
+}
+```
+
+## HTTP gateway notes
+
+- **Authentication:** requests carry an `authSig` produced by the caller's wallet (`signAuthMessage`). An all-zero `authSig` is accepted on testnet for development only.
+- **Caching:** the gateway may serve a cached result; `fresh: false` indicates no new round was executed. The cached payload can also be retrieved without triggering a round (passive pull); on Solana, the equivalent is [reading the `Feed` account](/guides/read-and-verify).
+- **Registry:** the SDK caches the registry version and node set per job via `prepareContext(jobId)`.
+
+<Note>
+The raw HTTP request schema, routes, and error catalog are pending publication of the gateway HTTP spec. For on-chain (Solana program) errors, see the [Solana error table](/verifiers/solana#consumer-relevant-errors).
+</Note>

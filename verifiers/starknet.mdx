@@ -1,0 +1,119 @@
+---
+title: "Starknet Verifier"
+description: "On-chain Schnorr verification for Molpha on Starknet: a Cairo contract that verifies one chain-agnostic signed payload."
+---
+
+The **Starknet Verifier** is a Cairo contract that performs on-chain verification of Molpha payloads on Starknet. Like every Molpha verifier, it holds a mirror of the registered node set and checks a single aggregated Schnorr signature over a self-contained data payload — so the same value the node network signs once is trustlessly verifiable on Starknet.
+
+<Note>
+**Solana is the canonical chain.** Jobs, staking, deposits, rewards, and the authoritative node registry live on Solana. The Starknet deployment carries only a *mirror* of the node public-key set (versioned snapshots) plus this lightweight verifier. It stores **no** job, round, or feed state — everything it needs arrives in calldata and is checked cryptographically.
+</Note>
+
+## One signature, every chain
+
+The Molpha signed message deliberately **omits `chainId`**. The node network signs `(job_id, value, timestamp, …)` once, and the Starknet verifier checks that exact same message — no re-signing, no chain-specific payload. This is what lets a single signed result be consumed on Starknet alongside any other supported chain.
+
+## What the Verifier does
+
+<CardGroup cols={2}>
+  <Card title="Node registry" icon="users">
+    Mirrors up to 256 oracle nodes and their secp256k1 public keys. Every add/remove creates a new immutable registry version.
+  </Card>
+  <Card title="Deterministic selection" icon="dice">
+    Derives the per-round signer group from a seed bound to the data payload, so callers cannot grind which nodes are eligible to sign.
+  </Card>
+  <Card title="Plain-sum aggregation" icon="key">
+    Reconstructs the coalition public key by summing the keys of the actual signers, then verifies one Schnorr signature against it.
+  </Card>
+  <Card title="Stateless verification" icon="shield-check">
+    `verify` is self-contained: the signed payload carries everything needed, and the result is permissionlessly verifiable.
+  </Card>
+</CardGroup>
+
+The full verification pipeline, signer-selection algorithm, and domain separators are shared by every Molpha chain and documented once in [Cryptography](/protocol/cryptography). On Starknet, the final curve check uses **native secp256k1 syscalls**: the contract computes `s·G − e·P` directly and compares its Ethereum-style address to the commitment.
+
+---
+
+## Core concepts
+
+### Registry versions
+
+The node set is **append-only and versioned**. Every `add_node` / `remove_node` creates a new immutable registry version, copying the prior node set forward. Historical snapshots are never mutated, so **a payload signed against an older registry version stays permanently verifiable**.
+
+- Index `0` of each version is the **plain-sum aggregate key** of all nodes in that version.
+- Indices `1 .. node_count` hold the individual node keys.
+- A `DataUpdate` is always verified against the exact `registry_version` it was signed for, even when newer versions exist.
+
+The protocol caps a registry at **256 nodes** (`MAX_NODES`) — exactly what a single 256-bit `signers_bitmap` can address.
+
+### Redundancy buffer and group size
+
+For each round the contract selects a signer group slightly larger than the strict threshold, so a few nodes can drop out without failing the round:
+
+```text
+group_size = min(signatures_required + redundancy_buffer, node_count)
+```
+
+`redundancy_buffer` is a protocol-admin parameter. The actual signers must be a subset of this selected group, and there must be at least `signatures_required` of them.
+
+### Signers bitmap
+
+Participation is encoded as a `u256` bitmap: **bit `i-1` is set iff the 1-based node index `i` signed.** With at most 256 nodes, a single `u256` is always sufficient.
+
+---
+
+## Data structures
+
+### `DataUpdate` — the signed result payload
+
+```cairo
+pub struct DataUpdate {
+    pub job_id: u256,             // identifier of the oracle job
+    pub registry_version: u32,    // node-set snapshot the signature is bound to
+    pub signatures_required: u32, // minimum signers (threshold) for this round
+    pub value: u256,              // the canonical result being attested
+    pub canonical_timestamp: u64, // round timestamp (part of the signed message)
+}
+```
+
+### `SchnorrSignature` — the aggregate signature
+
+```cairo
+pub struct SchnorrSignature {
+    pub signature: u256,      // aggregate Schnorr scalar s
+    pub commitment: felt252,  // eth-address of the nonce point R (low 160 bits)
+    pub signers_bitmap: u256, // bit (i-1) set iff 1-based signer index i participated
+}
+```
+
+A gateway response maps directly onto these structs, so the SDK can build calldata from the same fields it returns.
+
+---
+
+## Verifying a data update
+
+```cairo
+fn verify(data_update: DataUpdate, schnorr_data: SchnorrSignature) -> bool;
+```
+
+`verify` returns `true` for a valid signature and `false` for a cryptographically invalid one. **Structural / policy violations revert** (bad registry version, empty registry, zeroed inputs, too few signers, or a signer outside the selection set). Integrators should treat a revert and a `false` return as equivalent "not verified" outcomes.
+
+The checks run in order:
+
+1. The `registry_version` exists and has at least one node.
+2. Structural guards: non-zero `signatures_required`, `signers_bitmap`, `signature`, `commitment`.
+3. `popcount(signers_bitmap) ≥ signatures_required`.
+4. Signers ⊆ the deterministically derived selection set.
+5. The aggregate Schnorr signature over the canonical message.
+
+<Warning>
+`verify` returns a boolean for a bad signature rather than reverting. Consumer contracts **must** check the return value, or they will silently accept unverified data.
+</Warning>
+
+---
+
+## Consumer integration
+
+See [Verify on Starknet](/guides/verify-on-starknet) for the consumer-contract walkthrough and integration checklist. Because the Verifier is stateless with respect to feeds, **your contract owns any freshness, replay, or value-bounds policy** — `verify` only attests that the node network signed `(job_id, value, timestamp, …)` against a given registry version.
+
+A successful `verify` proves at least `signatures_required` keys from the mirrored `registry_version` signed the exact `DataUpdate`, and that every signer is inside the deterministic selection set. It does **not** prove freshness, prevent replay, or independently prove that the payload corresponds to genuine Solana job state. Those guarantees — and the protocol's admin powers — are covered in the [Security Model](/protocol/security-model).

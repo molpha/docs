@@ -1,0 +1,108 @@
+---
+title: "Create and Update a Feed"
+description: "Subscribe with USDC, register a job on Solana, then run a gateway round and submit the signed result on-chain."
+---
+
+Creating your own feed requires an active subscription. Reading existing feeds requires no subscription. This guide covers the producer flow: subscribe, create a job, then execute rounds to keep the feed updated.
+
+## Subscribe and create a job
+
+<Steps>
+<Step title="Subscribe to a plan">
+
+Subscriptions are paid in USDC on Solana. Fetch the live plan price first and pass it as a safety bound — the transaction aborts if the on-chain price is higher than what the user approved.
+
+```ts
+import { PlanType } from "@molpha-oracle/sdk";
+
+const plan = await sdk.solana.getPlan(PlanType.Basic);
+
+const { pricePaid } = await sdk.solana.subscribe(PlanType.Basic, {
+  maxPriceUsdc: plan.subscriptionPrice,
+});
+```
+
+Plan tiers are `Basic`, `Standard`, `Professional`, `Enterprise` (stable `u8` ordinals `0..3`). Each `Plan` defines `subscription_price` (monthly, USDC base units), `max_jobs`, `max_signers`, and whether private APIs are enabled. Extend later with `extend_subscription` — it adds one month and tops up the prepaid balance.
+
+</Step>
+<Step title="Create the job">
+
+A job commits to a specific off-chain data source and parsing logic. Only the hash of the API config is stored on-chain. `createJob` initializes both the `Job` account and its `Feed` account in one instruction.
+
+```ts
+import { deriveApiConfigHash } from "@molpha-oracle/sdk";
+
+const apiConfig = {
+  url: "https://api.example.com/price",
+  responseParser: "$.price",
+};
+
+const { jobId } = await sdk.solana.createJob({
+  apiConfigHash: deriveApiConfigHash(apiConfig),
+  signaturesRequired: 3,
+  decimals: 8,
+});
+```
+
+</Step>
+</Steps>
+
+### Constraints enforced on-chain
+
+- Subscription active (`valid_until` in the future) — otherwise `SubscriptionNotActive`
+- `signatures_required <= plan.max_signers` — otherwise `SignaturesExceedPlanMax`
+- `job_count < plan.max_jobs` — otherwise `JobLimitReached`
+- `job_id == keccak256("MOLPHA_JOB_V1" || owner || api_config_hash)` — otherwise `InvalidJobId`
+
+### With raw Anchor
+
+```typescript
+const apiConfigHash = /* 32-byte keccak of your API configuration */;
+const jobId = deriveJobId(wallet.publicKey, apiConfigHash);
+
+await program.methods
+  .createJob(
+    { apiConfigHash: Array.from(apiConfigHash), signaturesRequired: 8, decimals: 8 },
+    Array.from(jobId)
+  )
+  .accountsPartial({
+    owner: wallet.publicKey,
+    protocolConfig: protocolConfigPda,
+    plan: planPda,
+    job: findJobPda(jobId),
+    subscription: subscriptionPda,
+    feed: findFeedPda(jobId),
+    systemProgram: SystemProgram.programId,
+  })
+  .rpc();
+```
+
+See the [PDA derivation reference](/verifiers/solana#pda-derivation-reference) for all seeds. `add_delegate` / `remove_delegate` authorize up to 5 additional addresses to manage the job; this does not affect how the feed is read.
+
+## Execute a round
+
+`requestAndSubmit` runs a gateway round against the current on-chain registry version, receives a threshold-signed data update, and submits it to Solana — all in one call.
+
+```ts
+const { result, signature } = await sdk.requestAndSubmit(jobId, { apiConfig });
+console.log("Submitted in tx:", signature);
+```
+
+Under the hood this is equivalent to:
+
+```ts
+const result = await sdk.gateway.requestSignedData({ jobId, apiConfig });
+const { signature } = await sdk.solana.submitDataUpdate(result);
+```
+
+### The result
+
+The gateway returns a [`DataUpdateResult`](/sdk/reference#dataupdateresult) — a completed round, ready to submit on-chain. This flat payload maps directly onto every chain's verifier structs — see [verify on EVM](/guides/verify-on-evm), [Starknet](/guides/verify-on-starknet), and [Solana](/guides/read-and-verify#verify-on-solana).
+
+<Warning>
+Without a `signAuthMessage`-capable wallet (or a keypair-backed wallet), gateway execution falls back to an all-zero `authSig`. That path is for development only — production jobs should authenticate gateway execution.
+</Warning>
+
+<Tip>
+For fast repeated rounds, cache registry version, node set, and job config with `sdk.gateway.prepareContext(jobId)` so each subsequent round is a single gateway POST. See the [Gateway API](/sdk/gateway-api).
+</Tip>

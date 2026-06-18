@@ -1,0 +1,34 @@
+---
+title: "Deployments & Testnet Status"
+description: "Current testnet deployments, what is live, and what is not yet implemented."
+---
+
+**Albyn** (A1) is the current Molpha testnet release, live since June 2026.
+
+## Deployed addresses
+
+| Chain | Network | Address |
+|---|---|---|
+| Solana | Devnet | `MoLFeTRpDZgckPjjbLwW1wB9n85bQiqboPnvw9RwoG8` |
+| Ethereum | Sepolia | `0xb8e31ec095A22B1374cF87C19F94889476AFeB74` |
+| Arbitrum | Sepolia | `0x61f8e4C4c7272332D5fc45586b6641A586127D07` |
+| Avalanche | Fuji | `0x09F3E1eBCB296876882a3A4C2CE4D18Ea27582fC` |
+| BNB Chain | Testnet | `0x04Ba82685B6c805C0f3b5C9e6CFc9c7439b56F26` |
+| Starknet | Sepolia | `0x0489ddba93d59dbd6ea6aed84bd0697a45af7d23b278262ad78faa6de4ad6af0` |
+
+## Live today
+
+- **Solana program on Devnet** (program ID above): node registry, USDC subscriptions and plans, job + feed creation, permissionless `submit_data_update`, stateless `verify_data_update`.
+- **SDK** — [`@molpha-oracle/sdk`](https://www.npmjs.com/package/@molpha-oracle/sdk) v0.4.0: the full consumer flow (subscribe → create job → execute round → submit/verify → read feed) plus framework-agnostic EVM and Starknet verifier argument builders.
+- **EVM verifiers** — deployed on Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji, and BSC testnet.
+- **Starknet verifier** — deployed on Starknet Sepolia, with cross-chain parity tests proving that unmodified EVM-produced signatures verify on Cairo.
+
+## Not yet implemented
+
+- **Node rewards and settlement accounting** — round receipts and reward crediting ship in the next milestone (Brebeneskul).
+- **Slashing and dispute resolution** — proof-based slashing is a later milestone; the testnet node set is permissioned.
+- **Mainnet** — gated on a full protocol audit.
+
+<Warning>
+All deployments are **pre-audit testnet** contracts with a permissioned node set. There is no uptime SLA and no economic security (staking/slashing) backing testnet data. Do not rely on them for value. See the [Security Model](/protocol/security-model) for the full trust assumptions.
+</Warning>

@@ -1,0 +1,27 @@
+---
+title: "FAQ"
+---
+
+**Is there a protocol token?**
+No. Subscriptions are paid in USDC on Solana; there is no governance token and no token-price exposure.
+
+**Do I need a subscription to read a feed?**
+No. Reading any Solana `Feed` account is permissionless and free. A subscription is only required to create and maintain your own jobs/feeds.
+
+**Do I need to change my contract to consume Molpha on EVM?**
+One external call: `require(verifier.verify(update, sig))`, plus your own staleness check. No inheritance, no interface to implement.
+
+**Why does the same signature work on every chain?**
+The signed message contains no `chainId`, and every verifier (Solidity, Cairo, the Solana program) checks the identical domain-separated message with the identical selection and aggregation rules. The Starknet port is proven with parity tests that accept unmodified EVM-produced signatures.
+
+**Who keeps a Solana feed updated?**
+`submit_data_update` is permissionless — nodes, gateways, or your own keeper can push signed values. The program re-verifies the aggregate signature on every write, so the submitter doesn't affect trust.
+
+**Does the verifier protect me from stale or replayed data?**
+No — by design. Historical registry versions remain verifiable forever. Enforce freshness against `canonicalTimestamp` and replay protection in your own contract.
+
+**Is Molpha Chainlink (AggregatorV3) compatible?**
+No, by design. Consumers call `verify()` directly with a self-contained payload.
+
+**Is the protocol audited?**
+Not yet. The current deployments are pre-audit testnet contracts with a permissioned node set; mainnet is gated on a full audit.

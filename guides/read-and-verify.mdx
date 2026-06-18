@@ -1,0 +1,160 @@
+---
+title: "Read and Verify on Solana"
+description: "Read the verified on-chain Feed value, or statelessly verify a fresh signed payload inside your own transaction."
+---
+
+Two ways to consume Molpha data on Solana. **Read the `Feed`** for the last maintained value (free, low-latency). **Verify a payload** when you must prove freshness inside your own transaction (high-value, point-in-time decisions). Both are permissionless — no subscription required to read or verify.
+
+## Read the latest result
+
+The `Feed` account holds the latest verified value for a job. With the SDK:
+
+```ts
+const feed = await sdk.solana.readFeed(jobId);
+console.log(feed.value, feed.canonicalTimestamp);
+```
+
+### Pattern A — off-chain (TypeScript + Anchor)
+
+Derive the feed PDA and fetch it. If you know the owner and the `apiConfigHash`, you can compute the feed address with no on-chain lookups:
+
+```typescript
+import { Connection, PublicKey } from "@solana/web3.js";
+import { AnchorProvider, Program, Wallet } from "@coral-xyz/anchor";
+import { keccak_256 } from "@noble/hashes/sha3";
+import { BN } from "bn.js";
+import molphaIdl from "./molpha.json";
+
+const PROGRAM_ID = new PublicKey("MoLFeTRpDZgckPjjbLwW1wB9n85bQiqboPnvw9RwoG8");
+const JOB_ID_PREFIX = Buffer.from("MOLPHA_JOB_V1");
+const FEED_SEED = Buffer.from("molpha_feed");
+
+function deriveJobId(owner: PublicKey, apiConfigHash: Uint8Array): Uint8Array {
+  return keccak_256(
+    Buffer.concat([JOB_ID_PREFIX, owner.toBuffer(), Buffer.from(apiConfigHash)])
+  );
+}
+
+function findFeedPda(jobId: Uint8Array): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [FEED_SEED, Buffer.from(jobId)],
+    PROGRAM_ID
+  )[0];
+}
+
+const feed = await program.account.feed.fetch(findFeedPda(jobId));
+const raw = new BN(Buffer.from(feed.value), "be");      // big-endian 32-byte word
+const price = raw.toNumber() / 10 ** decimals;           // decimals from the Job account
+```
+
+Always apply a **staleness guard** before using the value:
+
+```typescript
+const MAX_AGE_SECONDS = 60;
+const age = Math.floor(Date.now() / 1000) - feed.canonicalTimestamp.toNumber();
+if (age > MAX_AGE_SECONDS) throw new Error(`Molpha feed is stale: ${age}s old`);
+```
+
+### Pattern B — from your Solana program
+
+Pass the `Feed` PDA into your instruction and read it. The most decoupled approach (no dependency on the Molpha crate) validates the PDA and reads fields by offset after the 8-byte Anchor discriminator:
+
+```rust
+use anchor_lang::prelude::*;
+
+pub const MOLPHA_PROGRAM_ID: Pubkey = pubkey!("MoLFeTRpDZgckPjjbLwW1wB9n85bQiqboPnvw9RwoG8");
+const FEED_SEED: &[u8] = b"molpha_feed";
+
+const OFF_CANONICAL_TS: usize = 8 + 32 + 4;        // 44
+const OFF_VALUE: usize = OFF_CANONICAL_TS + 8;      // 52
+
+#[derive(Accounts)]
+#[instruction(job_id: [u8; 32])]
+pub struct UseMolphaFeed<'info> {
+    /// CHECK: validated below to be the canonical Molpha feed PDA for `job_id`.
+    #[account(
+        seeds = [FEED_SEED, job_id.as_ref()],
+        bump,
+        seeds::program = MOLPHA_PROGRAM_ID,
+    )]
+    pub molpha_feed: AccountInfo<'info>,
+}
+
+pub fn use_molpha_feed(ctx: Context<UseMolphaFeed>, _job_id: [u8; 32]) -> Result<()> {
+    let data = ctx.accounts.molpha_feed.try_borrow_data()?;
+
+    let canonical_ts =
+        i64::from_le_bytes(data[OFF_CANONICAL_TS..OFF_CANONICAL_TS + 8].try_into().unwrap());
+
+    let mut value = [0u8; 32];
+    value.copy_from_slice(&data[OFF_VALUE..OFF_VALUE + 32]);
+
+    let now = Clock::get()?.unix_timestamp;
+    require!(now - canonical_ts <= 60, MyError::StaleOracle);
+    Ok(())
+}
+```
+
+<Note>
+Account scalars (`registry_version`, `canonical_timestamp`, `last_updated_slot`) are little-endian Borsh; the oracle `value` is a **big-endian** 32-byte word matching the cross-chain signed-message encoding (see [Values and decoding](/concepts/jobs#values-and-decoding)). Validate the PDA with `seeds::program = MOLPHA_PROGRAM_ID` so a caller can't substitute a look-alike account.
+</Note>
+
+If you prefer typed access, depend on the Molpha program crate, or use Anchor's `declare_program!` against the IDL for typed CPI and account helpers.
+
+## Verify on Solana
+
+When you need to prove that a value is fresh **at the moment of your transaction** (pull model), use `verify_data_update`. You supply a signed payload and the registry-index accounts for each signer. The instruction:
+
+1. Re-derives the node selection set for `(job_id, registry_version, canonical_timestamp)`.
+2. Reconstructs the coalition public key from the signers' `RegistryIndex` accounts.
+3. Verifies the aggregate Schnorr signature.
+4. **Reverts** on any failure, or **returns 72 bytes** of return data on success.
+
+Return data layout:
+
+| Bytes | Field | Encoding |
+|---|---|---|
+| `[0..32]` | `value` | raw 32-byte word |
+| `[32..40]` | `canonical_timestamp` | `i64` big-endian |
+| `[40..72]` | reserved | zero |
+
+### With the SDK
+
+```ts
+const { value, canonicalTimestamp } = await sdk.solana.verifyDataUpdate(result);
+```
+
+### With raw Anchor (simulation)
+
+The accounts are the `RegistryState` PDA plus **one `RegistryIndex` account per set bit in `signers_bitmap`**, passed as `remainingAccounts` in bit order:
+
+```typescript
+import { ComputeBudgetProgram, Transaction } from "@solana/web3.js";
+
+const verifyIx = await program.methods
+  .verifyDataUpdate(submitArgs)                   // SubmitDataUpdateArgs from the gateway
+  .accountsPartial({ registryState: registryStatePda })
+  .remainingAccounts(signerRegistryIndexAccounts) // one per set bit, in order
+  .instruction();
+
+const tx = new Transaction().add(
+  ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }),
+  verifyIx
+);
+tx.feePayer = payer.publicKey;
+tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+tx.sign(payer);
+
+const sim = await provider.simulate(tx, [payer]);
+const bytes = Buffer.from(sim.returnData!.data[0], "base64"); // 72 bytes
+const value = bytes.subarray(0, 32);
+const canonicalTimestamp = bytes.readBigInt64BE(32);
+```
+
+### From your own program (CPI)
+
+CPI into `verify_data_update` and read the result with `get_return_data` immediately after the call returns. Because the instruction reverts on an invalid signature, **a successful CPI is itself proof that the value is authentic**.
+
+## Read vs. verify
+
+Reading the `Feed` gives you the *last submitted* value. For high-value, point-in-time decisions where you must prove freshness inside your own transaction (settlements, liquidations triggered by a single read), use stateless verification instead. See the [Solana Program reference](/verifiers/solana) for the full account model and error table.

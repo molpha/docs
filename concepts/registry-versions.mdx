@@ -1,0 +1,38 @@
+---
+title: "Registry Versions"
+description: "The node set is append-only and versioned. Signatures are always checked against the snapshot they were produced for."
+---
+
+The node set is **append-only and versioned**. Every `addNode` / `removeNode` creates a brand-new immutable snapshot and bumps the registry version by one. Historical snapshots are never mutated or deleted.
+
+## Why versions matter
+
+A `DataUpdate` records the `registryVersion` it was signed under, and `verify()` always checks the signature against **exactly that snapshot** — even if newer versions exist. This guarantees:
+
+- A signature is checked against the node set that was active at signing time.
+- **Rounds signed against older versions remain permanently verifiable** (late-arriving payloads still verify).
+
+<Warning>
+Permanent verifiability also means the verifier has no replay window of its own. Consumers must enforce freshness (via `canonicalTimestamp`) and replay protection themselves.
+</Warning>
+
+## Storage layout
+
+Both EVM and Starknet registries follow the same layout:
+
+- **Index `0`** of every snapshot holds the running **plain-sum aggregate key** of all registered nodes.
+- **Indices `1..=nodeCount`** hold the individual node public keys (1-based indexing — this is why bitmap bit `i-1` maps to node index `i`).
+- **256-node cap** (`MAX_NODES = 256`), matching the single 256-bit signers bitmap.
+
+On EVM, each snapshot is one immutable **SSTORE2 blob**; the contract keeps an array of `registryPointers`, one per version. On Starknet, the same model is mirrored with per-`(version, index)` coordinate maps packed into a single felt key (`slot = version · 2^32 + index`). Version `0` is the empty set.
+
+## Mutations
+
+- **Add:** new aggregate = old aggregate + new pubkey; the node is appended at `count + 1`. Gated by a valid [proof-of-possession](/protocol/cryptography#proof-of-possession).
+- **Remove:** new aggregate = old aggregate − removed pubkey; **swap-and-pop** moves the last node into the freed slot to keep indices dense.
+
+<Warning>
+`removeNode` changes node indices. Always resolve a node's current index from the contract (`getNodeIndex`) rather than caching it.
+</Warning>
+
+On Solana, the registry lives in the `RegistryState` PDA (current/previous version + counts) with one `RegistryIndex` PDA per active node slot holding that node's secp256k1 public key. A payload's `registry_version` must be the current version or a grace-valid previous version (`InvalidRegistryVersion` otherwise).

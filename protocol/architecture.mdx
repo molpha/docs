@@ -1,0 +1,27 @@
+---
+title: "Architecture"
+description: "Components and design invariants."
+---
+
+## Component map
+
+<Frame>
+  <img src="/image28.png" alt="Molpha architecture: Solana canonical layer mirrors to off-chain nodes, which produce DataUpdate + sig verified on EVM/Starknet and consumed by application contracts" />
+</Frame>
+
+- **Gateway** — the HTTP front: accepts execution requests, dispatches rounds, returns completed `DataUpdateResult` payloads.
+- **Node network** — registered operators with secp256k1 signing keys; a deterministically selected subset signs each round.
+- **Solana program** — registry, jobs, subscriptions, feeds; permissionless `submit_data_update` re-verifies every write.
+- **Stateless verifiers** — one per EVM chain plus Starknet; mirror of the node-key set + `verify()`.
+- **SDK** — [`@molpha-oracle/sdk`](https://www.npmjs.com/package/@molpha-oracle/sdk) (v0.4.0): the facade over gateway + Solana, plus framework-agnostic EVM/Starknet argument builders.
+
+## Design invariants
+
+1. **Stateless verification on EVM/Starknet.** `verify()` holds no job, round, feed, or reward state; everything arrives in calldata. This is what allows one signed payload to be valid on every chain simultaneously.
+2. **No `chainId` in the signed message.** One signing round, every chain.
+3. **The signer set is committed by the signature.** `signersBitmap` is inside the signed message.
+4. **Selection is derivable on-chain.** The eligible group comes from `(jobId, registryVersion, canonicalTimestamp)` — verifiers re-derive it; nothing about selection is trusted from the caller.
+5. **Registry snapshots are immutable.** Historical rounds remain verifiable; freshness/replay policy belongs to the consumer.
+6. **Plain-sum aggregation + PoP.** No delinearization coefficients, no precomputed global key; rogue-key safety comes from registration-time proof-of-possession.
+
+The signing math, selection algorithm, and domain separators behind these invariants are detailed in [Cryptography](/protocol/cryptography).

@@ -1,0 +1,112 @@
+---
+title: "SDK Reference"
+description: "Exported types, derivation helpers, and the framework-agnostic EVM/Starknet verifier-argument builders."
+---
+
+## `RequestSignedDataOptions`
+
+Options for `MolphaGateway.requestSignedData` and the second argument to `MolphaSDK.requestAndSubmit`:
+
+```ts
+export interface RequestSignedDataOptions {
+  apiConfig: object;
+  maxAge?: number;
+}
+```
+
+`apiConfig` must match the job's committed configuration. `maxAge` (seconds) lets the gateway return a cached result when one is fresh enough.
+
+## `RoundContext`
+
+Cached registry version, node set, and job config produced by `sdk.gateway.prepareContext(jobId)`. Subsequent `requestSignedData` calls reuse this context so each round is a single gateway POST.
+
+## `DataUpdateResult`
+
+A completed gateway round, ready to submit on-chain:
+
+```ts
+export interface DataUpdateResult {
+  jobId: string;
+  /** Human-readable value. */
+  value: string;
+  /** 32-byte packed value, hex. */
+  valuePacked: string;
+  /** canonicalTimestamp (seconds). */
+  timestamp: number;
+  registryVersion: number;
+  signaturesRequired: number;
+  /** 32-byte big-endian bitmap, hex. */
+  signersBitmap: string;
+  /** 32-byte scalar, hex. */
+  s: string;
+  /** 20-byte commitment address, hex. */
+  commitmentAddr: string;
+  /** Whether the value was freshly fetched this round. */
+  fresh: boolean;
+}
+```
+
+## `MolphaWallet`
+
+The wallet interface the SDK expects — satisfied by keypair-backed wallets (`walletFromKeypairFile`) or browser wallet adapters:
+
+```ts
+interface MolphaWallet {
+  publicKey: PublicKey;
+  signTransaction(tx): Promise<Transaction>;
+  signAllTransactions(txs): Promise<Transaction[]>;
+  signAuthMessage(msg: Uint8Array): Promise<Uint8Array>;
+}
+```
+
+## `PlanType`
+
+```ts
+enum PlanType { Basic = 0, Standard = 1, Professional = 2, Enterprise = 3 }
+```
+
+## Derivation helpers
+
+```ts
+// jobId = keccak256("MOLPHA_JOB_V1" || owner || apiConfigHash)
+export function deriveJobId(owner: Uint8Array, apiConfigHash: Uint8Array): Uint8Array;
+
+// 32-byte keccak commitment to an off-chain API configuration
+export function deriveApiConfigHash(apiConfig: object): Uint8Array;
+```
+
+Both inputs to `deriveJobId` must be exactly 32 bytes (`owner` is a Solana public key).
+
+## `buildEvmVerifierArgs`
+
+Converts a `DataUpdateResult` into the two structs the EVM verifier's `verify()` takes — a pure mapping with zero runtime dependency (use the output with ethers, viem, or a raw `eth_call`).
+
+| Gateway `DataUpdateResult` | EVM struct field |
+|---|---|
+| `jobId` | `DataUpdate.jobId` |
+| `registryVersion` | `DataUpdate.registryVersion` |
+| `signaturesRequired` | `DataUpdate.signaturesRequired` |
+| `valuePacked` | `DataUpdate.value` |
+| `timestamp` | `DataUpdate.canonicalTimestamp` |
+| `s` | `SchnorrSignature.signature` |
+| `commitmentAddr` | `SchnorrSignature.commitment` |
+| `signersBitmap` | `SchnorrSignature.signersBitmap` |
+
+See [Verify on EVM](/guides/verify-on-evm) for the consumer-contract side.
+
+## `buildStarknetVerifierArgs`
+
+Converts a `DataUpdateResult` into the Cairo verifier's calldata structs, with no starknet.js runtime dependency.
+
+| Gateway `DataUpdateResult` | Cairo struct field | Cairo type |
+|---|---|---|
+| `jobId` | `data_update.job_id` | `u256` |
+| `registryVersion` | `data_update.registry_version` | `u32` |
+| `signaturesRequired` | `data_update.signatures_required` | `u32` |
+| `valuePacked` | `data_update.value` | `u256` |
+| `timestamp` | `data_update.canonical_timestamp` | `u64` |
+| `s` | `schnorr_data.signature` | `u256` |
+| `commitmentAddr` | `schnorr_data.commitment` | `felt252` (low 160 bits) |
+| `signersBitmap` | `schnorr_data.signers_bitmap` | `u256` |
+
+See [Verify on Starknet](/guides/verify-on-starknet) for the consumer-contract side.

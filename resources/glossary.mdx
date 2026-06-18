@@ -1,0 +1,20 @@
+---
+title: "Glossary"
+---
+
+| Term | Meaning |
+|---|---|
+| **Job** | A unit of oracle work identified by `jobId = keccak256("MOLPHA_JOB_V1" \|\| owner \|\| apiConfigHash)`; commits to an off-chain API configuration. |
+| **Feed** | The Solana account holding the latest verified value for a job; PDA `["molpha_feed", job_id]`. |
+| **Round** | One coordination event: one fetch, one signing session, one aggregate signature. |
+| **DataUpdate** | The self-contained signed result payload: jobId, registryVersion, signaturesRequired, value, canonicalTimestamp. |
+| **Canonical timestamp** | The round timestamp included in the signed message; the basis for staleness checks. |
+| **Registry version** | An immutable snapshot of the node-key set; incremented on every add/remove. |
+| **Selection set** | The pseudo-random subset of nodes eligible to sign a given round, derived from `(jobId, registryVersion, canonicalTimestamp)`. |
+| **Group size** | `signaturesRequired + redundancyBuffer`, capped at `nodeCount`; the size of the selection set. |
+| **Redundancy buffer** | Admin parameter widening the selection set beyond the threshold so dropouts don't fail the round. |
+| **Signers bitmap** | A 256-bit word where bit `i-1` marks 1-based node index `i` as a signer; bound into the signed message. |
+| **Coalition key** | Plain EC sum of the signers' public keys; the effective public key for the aggregate signature. |
+| **Commitment** | Ethereum-style address (low 160 bits) of the Schnorr nonce point `R`. |
+| **PoP** | Proof-of-Possession; a Schnorr signature proving control of a node key at registration. Molpha's sole rogue-key defense. |
+| **Plan / Subscription** | USDC tier definition / a consumer's active monthly subscription on Solana; required to create jobs, not to read feeds. |

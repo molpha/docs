@@ -1,0 +1,227 @@
+---
+title: "Quickstart"
+description: "Go from zero to a verified on-chain data feed with the Molpha SDK in under five minutes."
+icon: "rocket"
+---
+
+The Molpha SDK lets you turn off-chain API responses into threshold-signed, verified on-chain data. This guide walks you through the full consumer flow on Solana Devnet: subscribe to a plan, create an oracle job, run a gateway round, and submit the signed result on-chain.
+
+## Prerequisites
+
+- Node.js `>=18`
+- A Solana CLI keypair (e.g. `~/.config/solana/id.json`) with Devnet SOL
+- Devnet USDC for the subscription — grab some from [Circle's faucet](https://faucet.circle.com/) (select **USDC** on **Solana Devnet**)
+
+<Steps>
+
+<Step title="Install the SDK">
+
+Install the package along with the optional Solana peer dependencies (required for `MolphaSDK` / `MolphaSolanaClient`):
+
+<Tabs>
+<Tab title="pnpm">
+
+```bash
+pnpm add @molpha-oracle/sdk @solana/web3.js @coral-xyz/anchor @solana/spl-token bn.js
+```
+
+</Tab>
+<Tab title="npm">
+
+```bash
+npm install @molpha-oracle/sdk @solana/web3.js @coral-xyz/anchor @solana/spl-token bn.js
+```
+
+</Tab>
+<Tab title="yarn">
+
+```bash
+yarn add @molpha-oracle/sdk @solana/web3.js @coral-xyz/anchor @solana/spl-token bn.js
+```
+
+</Tab>
+</Tabs>
+
+Install [`@molpha-oracle/sdk`](https://www.npmjs.com/package/@molpha-oracle/sdk) v0.4.0 from npm.
+
+<Note>
+The package is ESM with `"sideEffects": false`. Gateway-only or read-only apps that skip the Solana imports can tree-shake the Anchor-heavy path entirely.
+</Note>
+
+</Step>
+
+<Step title="Initialize the SDK">
+
+`MolphaSDK` wires the gateway client and the Solana client together behind a single wallet.
+
+```ts
+import { Connection } from "@solana/web3.js";
+import { MolphaSDK } from "@molpha-oracle/sdk";
+import { walletFromKeypairFile } from "@molpha-oracle/sdk/utils";
+
+const sdk = new MolphaSDK({
+  connection: new Connection("https://api.devnet.solana.com", "confirmed"),
+  wallet: walletFromKeypairFile("~/.config/solana/id.json"),
+});
+```
+
+<Tip>
+`walletFromKeypairFile` is Node.js-only. In the browser, pass a `MolphaWallet` backed by a wallet adapter instead:
+
+```ts
+import type { MolphaWallet } from "@molpha-oracle/sdk";
+
+const wallet: MolphaWallet = {
+  publicKey: adapter.publicKey,
+  signTransaction: (tx) => adapter.signTransaction(tx),
+  signAllTransactions: (txs) => adapter.signAllTransactions(txs),
+  signAuthMessage: async (msg) => new Uint8Array(await adapter.signMessage(msg)),
+};
+```
+</Tip>
+
+</Step>
+
+<Step title="Subscribe to a plan">
+
+Subscriptions are paid in USDC on Solana. Fetch the live plan price first and pass it as a safety bound — the transaction aborts if the on-chain price is higher than what the user approved.
+
+```ts
+import { PlanType } from "@molpha-oracle/sdk";
+
+const plan = await sdk.solana.getPlan(PlanType.Basic);
+
+const { pricePaid } = await sdk.solana.subscribe(PlanType.Basic, {
+  maxPriceUsdc: plan.subscriptionPrice,
+});
+```
+
+</Step>
+
+<Step title="Create a job">
+
+A job commits to a specific off-chain data source and parsing logic. Only the hash of the API config is stored on-chain — large payloads and secrets stay off-chain.
+
+```ts
+import { deriveApiConfigHash } from "@molpha-oracle/sdk";
+
+const apiConfig = {
+  url: "https://api.example.com/price",
+  responseParser: "$.price",
+};
+
+const { jobId } = await sdk.solana.createJob({
+  apiConfigHash: deriveApiConfigHash(apiConfig),
+  signaturesRequired: 3,
+  decimals: 8,
+});
+```
+
+</Step>
+
+<Step title="Request and submit">
+
+`requestAndSubmit` runs a gateway round against the current on-chain registry version, receives a threshold-signed data update, and submits it to Solana — all in one call.
+
+```ts
+const { result, signature } = await sdk.requestAndSubmit(jobId, {
+  apiConfig,
+});
+
+console.log("Submitted in tx:", signature);
+```
+
+Under the hood this is equivalent to:
+
+```ts
+const result = await sdk.gateway.requestSignedData({ jobId, apiConfig });
+const { signature } = await sdk.solana.submitDataUpdate(result);
+```
+
+The returned `DataUpdateResult` includes the signed value, canonical timestamp, registry version, required quorum, signer bitmap, and aggregate signature.
+
+</Step>
+
+<Step title="Read the feed">
+
+Read the finalized on-chain feed value at any time:
+
+```ts
+const feed = await sdk.solana.readFeed(jobId);
+console.log(feed.value, feed.canonicalTimestamp);
+```
+
+To verify a signed result via simulation without writing state:
+
+```ts
+const { value, canonicalTimestamp } = await sdk.solana.verifyDataUpdate(result);
+```
+
+</Step>
+
+</Steps>
+
+## Full example
+
+```ts
+import { Connection } from "@solana/web3.js";
+import { MolphaSDK, PlanType, deriveApiConfigHash } from "@molpha-oracle/sdk";
+import { walletFromKeypairFile } from "@molpha-oracle/sdk/utils";
+
+const sdk = new MolphaSDK({
+  connection: new Connection("https://api.devnet.solana.com", "confirmed"),
+  wallet: walletFromKeypairFile("~/.config/solana/id.json"),
+});
+
+// 1. Subscribe (USDC on Solana Devnet)
+const plan = await sdk.solana.getPlan(PlanType.Basic);
+await sdk.solana.subscribe(PlanType.Basic, {
+  maxPriceUsdc: plan.subscriptionPrice,
+});
+
+// 2. Create a job committed to an API config hash
+const apiConfig = {
+  url: "https://api.example.com/price",
+  responseParser: "$.price",
+};
+
+const { jobId } = await sdk.solana.createJob({
+  apiConfigHash: deriveApiConfigHash(apiConfig),
+  signaturesRequired: 3,
+  decimals: 8,
+});
+
+// 3. Run a gateway round and submit the signed result on-chain
+const { signature } = await sdk.requestAndSubmit(jobId, { apiConfig });
+console.log("Submitted:", signature);
+
+// 4. Read the verified feed
+const feed = await sdk.solana.readFeed(jobId);
+console.log("Latest value:", feed.value);
+```
+
+<Warning>
+Without a `signAuthMessage`-capable wallet (or a keypair-backed wallet), gateway execution falls back to an all-zero `authSig`. That path is for development only — production jobs should authenticate gateway execution.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="Verify on EVM" icon="ethereum" href="/guides/verify-on-evm">
+  Verify the same signed result on EVM chains with `buildEvmVerifierArgs` and the deployed testnet verifiers.
+</Card>
+
+<Card title="Verify on Starknet" icon="layer-group" href="/guides/verify-on-starknet">
+  Build Starknet verifier structs from a gateway round with `buildStarknetVerifierArgs`.
+</Card>
+
+<Card title="Read from your program" icon="code" href="/guides/read-and-verify">
+  Read the verified `Feed` account from a client or via CPI-free account reads.
+</Card>
+
+<Card title="Fast repeated rounds" icon="bolt" href="/sdk/gateway-api">
+  Cache registry version, node set, and job config with `sdk.gateway.prepareContext(jobId)`.
+</Card>
+
+</CardGroup>

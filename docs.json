@@ -1,0 +1,127 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Molpha Oracle Protocol",
+  "description": "Pull-native threshold oracle. Any HTTP API → one threshold-signed result → verified on Solana, EVM, and Starknet.",
+  "logo": {
+    "dark": "/logo/logo.svg",
+    "light": "/logo/logo.svg"
+  },
+  "favicon": "/logo/favicon.svg",
+  "colors": {
+    "primary": "#cb852a",
+    "light": "#cb852a",
+    "dark": "#cb852a"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Support",
+        "href": "mailto:contact@molpha.io"
+      },
+      {
+        "label": "GitHub",
+        "href": "https://github.com/molpha"
+      },
+      {
+        "label": "npm",
+        "href": "https://www.npmjs.com/package/@molpha-oracle/sdk"
+      }
+    ]
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Home",
+        "pages": ["index"]
+      },
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "getting-started/introduction",
+              "getting-started/quickstart",
+              "getting-started/how-it-works"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/jobs",
+              "concepts/rounds-and-signatures",
+              "concepts/registry-versions"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/create-and-update",
+              "guides/read-and-verify",
+              "guides/verify-on-evm",
+              "guides/verify-on-starknet"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "SDK",
+        "groups": [
+          {
+            "group": "@molpha-oracle/sdk",
+            "pages": [
+              "sdk/overview",
+              "sdk/gateway-api",
+              "sdk/reference"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Verifiers",
+        "groups": [
+          {
+            "group": "On-Chain Verification",
+            "pages": [
+              "verifiers/overview",
+              "verifiers/solana",
+              "verifiers/evm",
+              "verifiers/starknet",
+              "verifiers/deployments"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Protocol",
+        "groups": [
+          {
+            "group": "Specification",
+            "pages": [
+              "protocol/architecture",
+              "protocol/gateway",
+              "protocol/cryptography",
+              "protocol/security-model"
+            ]
+          },
+          {
+            "group": "Resources",
+            "pages": [
+              "resources/glossary",
+              "resources/faq",
+              "resources/releases"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "x": "https://x.com/molpha_oracle",
+      "github": "https://github.com/molpha",
+      "linkedin": "https://www.linkedin.com/company/molpha-oracle"
+    }
+  }
+}

@@ -1,0 +1,32 @@
+---
+title: "Security Model"
+description: "What verification guarantees, what it doesn't, and the current testnet trust assumptions."
+---
+
+## What a successful `verify()` proves
+
+- At least `signaturesRequired` keys from the referenced `registryVersion` signed the payload.
+- Every signer is inside the deterministic selection set for the round.
+- The aggregate Schnorr signature is valid for the exact `DataUpdate`.
+
+## What it does not prove
+
+- That `jobId`, `value`, or `canonicalTimestamp` correspond to genuine Solana job state — stateless verifiers store no job state. That guarantee is economic: honest selected nodes only sign messages matching the canonical Solana job they observe. Solana remains the source of truth for job validity.
+- Freshness or non-replay. Historical registry versions remain verifiable forever, by design. Consumers must enforce `maxStaleness` against `canonicalTimestamp` and track consumed payloads where replay matters.
+
+## Defenses in the design
+
+| Threat | Defense |
+|---|---|
+| Rogue-key attack on plain-sum aggregation | Mandatory Schnorr proof-of-possession at registration, per deployment |
+| Signer-set forgery | `signersBitmap` is bound inside the signed message; coalition key recomputed from the registry snapshot |
+| Selection grinding | Selection seed derived only from `(jobId, registryVersion, canonicalTimestamp)`; verifiers re-derive and enforce subset |
+| Cross-context / cross-job reuse | Message binds `jobId`, `canonicalTimestamp`, `signersBitmap`, `value` |
+| Unauthorized feed writes on Solana | `submit_data_update` re-verifies the aggregate signature on every write; monotonic `canonical_timestamp` |
+| Look-alike feed accounts | Consumers validate the `Feed` PDA with `seeds::program = MOLPHA_PROGRAM_ID` |
+
+## Current trust assumptions (Albyn testnet)
+
+- **Protocol admin** controls node registration (`addNode`/`removeNode`) and the redundancy buffer on every registry. The registered node set plus the admin are the entire trust root of the stateless verifiers.
+- **Pre-audit.** No external audit has been completed; mainnet is gated on it.
+- **No economic security yet.** Staking, slashing, and reward accounting are not live; node honesty on testnet is not economically enforced.

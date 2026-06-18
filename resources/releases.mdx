@@ -1,0 +1,33 @@
+---
+title: "Releases & Roadmap"
+description: "Shipped milestones and what's next. Molpha releases are codenamed after Carpathian peaks, A → Z."
+---
+
+Molpha releases are codenamed after Carpathian peaks, A → Z. **Hoverla** — the highest — is reserved for mainnet GA.
+
+## Roadmap
+
+| Milestone | Status | Scope |
+|---|---|---|
+| **Albyn** (A1) | ✅ Shipped — June 2026 | Full signing/verification flow end-to-end; SDK [v0.4.0](https://www.npmjs.com/package/@molpha-oracle/sdk); verifiers on five testnets. |
+| **Brebeneskul** (A2) | 🔨 In progress | The economic layer: round settlement and subscription enforcement. |
+| **Chivchyn (A3)** | Planned | Slashing and dispute resolution: proof-based slashing with on-chain evidence. |
+| **Dzembronia (A4)** | Planned | Mainnet GA: full protocol audit, node-provider onboarding, mainnet deployment across all supported chains. |
+
+## Changelog
+
+### SDK v0.4.0 — June 2026
+
+- Renamed gateway/SDK methods for clarity: `MolphaGateway.execute` → `requestSignedData`, `MolphaSDK.executeAndSubmit` → `requestAndSubmit`.
+- Renamed types: `ExecuteOptions` → `RequestSignedDataOptions`, `ExecuteContext` → `RoundContext`.
+
+### Albyn (A1) — June 2026
+
+First public testnet release.
+
+- [`@molpha-oracle/sdk`](https://www.npmjs.com/package/@molpha-oracle/sdk) v0.3.2 published: full consumer flow (subscribe → create job → execute round → submit/verify → read feed), `buildEvmVerifierArgs`, `buildStarknetVerifierArgs`.
+- Solana program live on Devnet (`MoLFeTRpDZgckPjjbLwW1wB9n85bQiqboPnvw9RwoG8`): registry, USDC plans/subscriptions, jobs + feeds, permissionless `submit_data_update`, stateless `verify_data_update`.
+- EVM verifiers deployed on Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji, BSC testnet.
+- Starknet verifier deployed on Starknet Sepolia, with cross-chain parity tests accepting unmodified EVM-produced signatures.
+
+See current addresses and live/not-yet-implemented status in [Deployments & Testnet Status](/verifiers/deployments).

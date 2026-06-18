@@ -1,0 +1,299 @@
+---
+title: "Solana Program"
+description: "The canonical chain: program ID, account model, PDA derivation, instructions, events, and errors."
+---
+
+Solana is Molpha's canonical chain. All protocol state — the node registry, job definitions, subscriptions, and feed values — lives in the Molpha Solana program. As a consumer you interact with two things: your **`Subscription`** (to create feeds) and the **`Feed`** account (to read verified data).
+
+## Network details
+
+| Item | Value |
+|---|---|
+| Program name | `molpha` |
+| Program ID (devnet) | `MoLFeTRpDZgckPjjbLwW1wB9n85bQiqboPnvw9RwoG8` |
+| Program ID (localnet) | `MoLFeTRpDZgckPjjbLwW1wB9n85bQiqboPnvw9RwoG8` |
+| Cluster | Devnet (current) |
+| Settlement asset | USDC (SPL token; mint stored in `ProtocolConfig.usdc_mint`) |
+| Framework | Anchor |
+
+You will need the program's **IDL** to build a client. Generate it from the repo with `anchor build` (written to `target/idl/molpha.json`), or fetch the on-chain IDL with `anchor idl fetch MoLFeTRpDZgckPjjbLwW1wB9n85bQiqboPnvw9RwoG8`.
+
+---
+
+## Account model
+
+Molpha uses Program Derived Addresses (PDAs) for all of its accounts. The addresses you care about are derived deterministically from a few seeds — you never need to store them.
+
+| Account | Seeds | Purpose |
+|---|---|---|
+| `ProtocolConfig` | `["molpha_config"]` | Global config: USDC mint, treasury, fees. |
+| `RegistryState` | `["molpha_registry"]` | Current/previous node registry version + counts. |
+| `RegistryIndex` | `["molpha_registry_index", u32_le(index)]` | One per active node slot; holds the node's secp256k1 pubkey. |
+| `Plan` | `["molpha_plan", [plan_type_u8]]` | Subscription tier definition (price, limits). |
+| `Subscription` | `["molpha_subscription", owner]` | A consumer's active subscription. |
+| `Job` | `["molpha_job", job_id]` | Definition of what to fetch (API config + quorum). |
+| `Feed` | `["molpha_feed", job_id]` | **The account you read.** Latest verified value. |
+
+### Identifiers
+
+```
+job_id = keccak256( "MOLPHA_JOB_V1" || owner_pubkey || api_config_hash )
+```
+
+The `Feed` PDA is derived from that same `job_id`, so **if you know the owner and the `api_config_hash`, you can compute the feed address with no on-chain lookups.**
+
+---
+
+## Data model
+
+### `Feed` — the account you read
+
+```rust
+#[account]
+pub struct Feed {
+    pub job_id: [u8; 32],          // job this feed belongs to
+    pub registry_version: u32,     // node registry version that signed the value
+    pub canonical_timestamp: i64,  // off-chain time the value was produced (unix seconds)
+    pub value: [u8; 32],           // the verified value (big-endian 32-byte word)
+    pub signers_bitmap: [u8; 32],  // which node slots signed this update
+    pub signatures_required: u8,   // quorum threshold for this update
+    pub last_updated_slot: u64,    // Solana slot of the last on-chain write
+    pub bump: u8,
+}
+```
+
+Key fields for consumers:
+
+- **`value`** — the verified data, a 32-byte **big-endian** word. For numeric feeds this is an `int256`/`uint256` scaled by the job's `decimals` (see [Values and decoding](/concepts/jobs#values-and-decoding)).
+- **`canonical_timestamp`** — when the data was produced off-chain. **Use this for staleness checks**, not the slot.
+- **`last_updated_slot`** — the Solana slot at which the value was last written on-chain.
+- **`signers_bitmap` / `signatures_required`** — provenance: how many (and which) nodes signed.
+
+<Note>
+The `Feed` is updated by a permissionless `submit_data_update` instruction — any keeper, node, or gateway can push a freshly signed value. The on-chain program re-verifies the aggregate signature on every write, so you can trust the stored `value` regardless of who submitted it. A new value is only accepted if its `canonical_timestamp` is strictly greater than the one already stored (monotonic freshness).
+</Note>
+
+### `Job`
+
+```rust
+#[account]
+pub struct Job {
+    pub job_id: [u8; 32],
+    pub owner: Pubkey,
+    pub delegates: [Pubkey; 5],     // optional addresses allowed to manage the job
+    pub delegate_count: u8,
+    pub api_config_hash: [u8; 32],  // commitment to the off-chain API configuration
+    pub decimals: u8,               // fixed-point scale for `value`
+    pub signatures_required: u8,    // quorum requested for this job
+    pub created_at: i64,
+    pub bump: u8,
+}
+```
+
+### `Subscription` and `Plan`
+
+To **create your own feed** you need an active subscription. Reading existing feeds requires no subscription.
+
+```rust
+#[account]
+pub struct Subscription {
+    pub owner: Pubkey,
+    pub plan_type: PlanType,   // Basic | Standard | Professional | Enterprise
+    pub prepaid_usdc: u64,
+    pub price: u64,
+    pub valid_until: i64,      // subscription expires at this unix time
+    pub job_count: u32,        // jobs created against this subscription
+    pub bump: u8,
+}
+
+#[account]
+pub struct Plan {
+    pub plan_type: PlanType,
+    pub subscription_price: u64,    // monthly price in USDC (base units)
+    pub max_jobs: u32,              // job cap for this tier
+    pub max_signers: u8,            // max quorum you may request
+    pub private_api_enabled: bool,
+    pub is_active: bool,
+    pub bump: u8,
+}
+```
+
+`PlanType` is an enum with stable `u8` ordinals: `Basic = 0`, `Standard = 1`, `Professional = 2`, `Enterprise = 3`.
+
+---
+
+## Consuming feeds
+
+Two integration patterns — pick based on whether the **last on-chain value** is fresh enough, or whether you need to **prove freshness inside your own transaction**:
+
+| Pattern | Freshness | Where | Cost |
+|---|---|---|---|
+| **Read the `Feed` account** | Last submitted value | Off-chain client or on-chain account read | Free (an account read) |
+| **Stateless `verify_data_update`** | A payload you supply | On-chain CPI / simulation | Verification compute |
+
+Walkthroughs: [Read and Verify on Solana](/guides/read-and-verify) — off-chain and in-program reads, plus stateless verification (simulation, CPI).
+
+### `verify_data_update` semantics
+
+The instruction takes a `SubmitDataUpdateArgs` payload plus the `RegistryState` PDA and **one `RegistryIndex` account per set bit in `signers_bitmap`** (as `remainingAccounts`, in bit order). It:
+
+1. Re-derives the node selection set for `(job_id, registry_version, canonical_timestamp)`.
+2. Reconstructs the coalition public key from the signers' `RegistryIndex` accounts.
+3. Verifies the aggregate Schnorr signature.
+4. **Reverts** on any failure, or **returns 72 bytes** of return data on success.
+
+Return data layout (72 bytes):
+
+| Bytes | Field | Encoding |
+|---|---|---|
+| `[0..32]` | `value` | raw 32-byte word |
+| `[32..40]` | `canonical_timestamp` | `i64` big-endian |
+| `[40..72]` | reserved | zero |
+
+```rust
+pub struct SubmitDataUpdateArgs {
+    pub job_id: [u8; 32],
+    pub signatures_required: u8,
+    pub registry_version: u32,
+    pub signers_bitmap: [u8; 32],
+    pub value: [u8; 32],
+    pub canonical_timestamp: i64,
+    pub agg_sig_s: [u8; 32],       // Schnorr signature scalar
+    pub commitment_addr: [u8; 20], // commitment (Ethereum-style address)
+}
+```
+
+---
+
+## Consumer instruction reference
+
+Instructions a builder/consumer is likely to call. (Node- and admin-only instructions are omitted.)
+
+| Instruction | Who | Purpose |
+|---|---|---|
+| `subscribe(plan_type)` | Consumer | Open a monthly USDC subscription. |
+| `extend_subscription()` | Consumer | Add one month and top up prepaid balance. |
+| `create_job(args, job_id)` | Subscriber | Define a job and initialize its `Feed`. |
+| `add_delegate(args)` / `remove_delegate(args)` | Job owner | Manage authorized job delegates. |
+| `verify_data_update(args)` | Anyone | Statelessly verify a signed payload; returns value + timestamp. |
+| `submit_data_update(args)` | Anyone (typically keepers/nodes) | Verify a signed payload and write it to the `Feed`. |
+
+---
+
+## PDA derivation reference
+
+```typescript
+import { PublicKey } from "@solana/web3.js";
+
+const PROGRAM_ID = new PublicKey("MoLFeTRpDZgckPjjbLwW1wB9n85bQiqboPnvw9RwoG8");
+
+const findConfig = () =>
+  PublicKey.findProgramAddressSync([Buffer.from("molpha_config")], PROGRAM_ID)[0];
+
+const findRegistry = () =>
+  PublicKey.findProgramAddressSync([Buffer.from("molpha_registry")], PROGRAM_ID)[0];
+
+const findPlan = (planTypeU8: number) =>
+  PublicKey.findProgramAddressSync(
+    [Buffer.from("molpha_plan"), Buffer.from([planTypeU8])],
+    PROGRAM_ID
+  )[0];
+
+const findSubscription = (owner: PublicKey) =>
+  PublicKey.findProgramAddressSync(
+    [Buffer.from("molpha_subscription"), owner.toBuffer()],
+    PROGRAM_ID
+  )[0];
+
+const findJob = (jobId: Uint8Array) =>
+  PublicKey.findProgramAddressSync(
+    [Buffer.from("molpha_job"), Buffer.from(jobId)],
+    PROGRAM_ID
+  )[0];
+
+const findFeed = (jobId: Uint8Array) =>
+  PublicKey.findProgramAddressSync(
+    [Buffer.from("molpha_feed"), Buffer.from(jobId)],
+    PROGRAM_ID
+  )[0];
+
+const findRegistryIndex = (index: number) => {
+  const le = Buffer.alloc(4);
+  le.writeUInt32LE(index >>> 0, 0);
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("molpha_registry_index"), le],
+    PROGRAM_ID
+  )[0];
+};
+```
+
+---
+
+## Using the CLI
+
+The repository ships a TypeScript CLI that wraps every consumer instruction — the fastest way to explore feeds on devnet.
+
+```bash
+# Subscribe to the Standard plan (planId: 0=basic 1=standard 2=professional 3=enterprise)
+molpha --cluster devnet subscription subscribe --plan-id 1
+
+# Create a job + feed
+molpha --cluster devnet job create \
+  --api-config-hash 0x<32-byte-hex> \
+  --decimals 8
+
+# Read accounts
+molpha --cluster devnet account feed --job-id 0x<job-id-hex>
+molpha --cluster devnet account subscription --owner <pubkey>
+molpha --cluster devnet account plan --plan-id 1
+
+# Verify a signed payload and print the decoded return data
+molpha --cluster devnet data verify --fixture path/to/payload.json
+```
+
+The CLI resolves the program ID from `Anchor.toml` and expects the IDL at `target/idl/molpha.json` (override with `--idl`).
+
+---
+
+## Events
+
+The program emits Anchor events you can subscribe to (`program.addEventListener`) for indexing and reactive UIs.
+
+| Event | Emitted when | Useful fields |
+|---|---|---|
+| `FeedUpdated` | A feed value is written | `job_id`, `value`, `canonical_timestamp`, `signers_bitmap`, `last_updated_slot` |
+| `JobCreated` | A job + feed is created | `job_id`, `owner`, `signatures_required` |
+| `Subscribed` | A subscription opens | `owner`, `plan_type`, `valid_until` |
+| `SubscriptionExtended` | A subscription is extended | `owner`, `valid_until` |
+| `DelegateAdded` / `DelegateRemoved` | Job delegates change | `job_id`, `delegate` |
+
+To stream live feed values off-chain, subscribe to `FeedUpdated` filtered by your `job_id`.
+
+---
+
+## Consumer-relevant errors
+
+| Error | Meaning / how to handle |
+|---|---|
+| `SubscriptionNotActive` | Your subscription expired — call `extend_subscription`. |
+| `JobLimitReached` | `job_count >= plan.max_jobs` — upgrade your plan. |
+| `SignaturesExceedPlanMax` | Requested quorum exceeds `plan.max_signers`. |
+| `InvalidJobId` | `job_id` doesn't match `keccak256(prefix || owner || api_config_hash)`. |
+| `PlanNotActive` | The target plan tier is disabled. |
+| `FeedNotNewer` | A submitted value isn't newer than the stored `canonical_timestamp`. |
+| `InvalidRegistryVersion` | The payload's `registry_version` is neither current nor a grace-valid previous version. |
+| `InsufficientSigners` | `popcount(signers_bitmap) < signatures_required`. |
+| `InvalidAggregateSignature` | Schnorr verification failed — the payload is not authentic. |
+| `MissingSignerAccount` | The `remainingAccounts` don't match the signers in the bitmap. |
+
+---
+
+## Best practices
+
+- **Always check staleness** against `canonical_timestamp`, with a `maxAge` appropriate to your use case. Never assume a stored value is current.
+- **Pin the value encoding.** Decode `value` as a big-endian word and scale by the job's `decimals`. Document the schema for non-numeric feeds.
+- **Inspect provenance when it matters.** `signatures_required` and `signers_bitmap` tell you the quorum behind a value; high-value flows can enforce a minimum signer count.
+- **Prefer stateless verification for high-value, point-in-time decisions** (settlements, liquidations triggered by a single read) where you must prove freshness in-transaction. Prefer reading the `Feed` for low-latency reads of the latest maintained value.
+- **Validate the PDA, not just the data.** When reading the feed in a program, derive it from `["molpha_feed", job_id]` with `seeds::program = MOLPHA_PROGRAM_ID` so a caller can't substitute a look-alike account.
+
+See the [FAQ](/resources/faq) for common consumer questions (subscriptions, who updates feeds, endianness).
