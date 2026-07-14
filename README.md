@@ -20,20 +20,26 @@ mintlify dev
 
 The site will be available at `http://localhost:3000`.
 
-## Repository Structure
+## Site Structure
+
+Navigation uses two top-level tabs:
+
+| Tab | Purpose |
+| --- | --- |
+| **Documentation** | Learn the protocol, follow guides, set up the MCP server, read verifier and protocol specs |
+| **SDK Reference** | `@molpha-oracle/sdk` overview, gateway API, and type reference |
+
+### Documentation sidebar
 
 ```
-.
-├── docs.json              # Mintlify configuration (navigation, theme, metadata)
-├── index.mdx              # Home page
-├── getting-started/       # Introduction, quickstart, how it works
-├── concepts/              # Jobs, rounds & signatures, registry versions
-├── guides/                # Create/update, read/verify, verify on EVM & Starknet
-├── sdk/                   # @molpha-oracle/sdk overview, gateway API, reference
-├── verifiers/             # On-chain verification (Solana, EVM, Starknet, deployments)
-├── protocol/              # Architecture, gateway, cryptography, security model
-├── resources/             # Glossary, FAQ, releases
-└── logo/                  # Logo and favicon assets
+Documentation/
+├── Get Started/          # Home, introduction, quickstart, how it works
+├── Core Concepts/        # Jobs, rounds & signatures, registry versions
+├── Guides/               # Create/update, read/verify, EVM & Starknet verification
+├── MCP Server/           # AI agent integration (Cursor, Claude, Codex)
+├── Verifiers/            # Solana, EVM, Starknet, deployments
+├── Protocol/             # Architecture, gateway, cryptography, security
+└── Resources/            # Glossary, FAQ, releases
 ```
 
 ## Contributing

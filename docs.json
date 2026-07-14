@@ -5,7 +5,8 @@
   "description": "Pull-native threshold oracle. Any HTTP API → one threshold-signed result → verified on Solana, EVM, and Starknet.",
   "logo": {
     "dark": "/logo/logo.svg",
-    "light": "/logo/logo.svg"
+    "light": "/logo/logo.svg",
+    "href": "https://molpha.io"
   },
   "favicon": "/logo/favicon.svg",
   "colors": {
@@ -32,15 +33,12 @@
   "navigation": {
     "tabs": [
       {
-        "tab": "Home",
-        "pages": ["index"]
-      },
-      {
         "tab": "Documentation",
         "groups": [
           {
             "group": "Get Started",
             "pages": [
+              "index",
               "getting-started/introduction",
               "getting-started/quickstart",
               "getting-started/how-it-works"
@@ -62,27 +60,15 @@
               "guides/verify-on-evm",
               "guides/verify-on-starknet"
             ]
-          }
-        ]
-      },
-      {
-        "tab": "SDK",
-        "groups": [
+          },
           {
-            "group": "@molpha-oracle/sdk",
+            "group": "MCP Server",
             "pages": [
-              "sdk/overview",
-              "sdk/gateway-api",
-              "sdk/reference"
+              "mcp/molpha-mcp"
             ]
-          }
-        ]
-      },
-      {
-        "tab": "Verifiers",
-        "groups": [
+          },
           {
-            "group": "On-Chain Verification",
+            "group": "Verifiers",
             "pages": [
               "verifiers/overview",
               "verifiers/solana",
@@ -90,14 +76,9 @@
               "verifiers/starknet",
               "verifiers/deployments"
             ]
-          }
-        ]
-      },
-      {
-        "tab": "Protocol",
-        "groups": [
+          },
           {
-            "group": "Specification",
+            "group": "Protocol",
             "pages": [
               "protocol/architecture",
               "protocol/gateway",
@@ -111,6 +92,19 @@
               "resources/glossary",
               "resources/faq",
               "resources/releases"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "SDK Reference",
+        "groups": [
+          {
+            "group": "TypeScript SDK",
+            "pages": [
+              "sdk/overview",
+              "sdk/gateway-api",
+              "sdk/reference"
             ]
           }
         ]
