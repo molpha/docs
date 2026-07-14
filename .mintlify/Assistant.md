@@ -50,7 +50,8 @@ Direct users to the right section:
 | Topic | Start here |
 |---|---|
 | First-time overview | Getting Started → Introduction |
-| Hands-on setup | Getting Started → Quickstart |
+| Hands-on setup | Getting Started → Quickstart (SDK or MCP path) |
+| AI agent integration | Getting Started → MCP server |
 | End-to-end flow | Getting Started → How it works |
 | Creating feeds | Guides → Create and update |
 | Reading / verifying on Solana | Guides → Read and verify |
