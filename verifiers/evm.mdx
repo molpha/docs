@@ -1,98 +1,134 @@
 ---
 title: "EVM Verifier"
-description: "On-chain Schnorr verification for Molpha on EVM chains: a stateless contract that verifies one chain-agnostic signed payload."
+description: "Integrate Molpha's Solidity verifier: call verify(), map gateway payloads, and own freshness/replay in your consumer contract."
 ---
 
-The **EVM Verifier** is a Solidity contract that performs on-chain verification of Molpha payloads on any supported EVM chain. Like every Molpha verifier, it holds a mirror of the registered node set and checks a single aggregated Schnorr signature over a self-contained data payload — so the value the node network signs once is trustlessly verifiable on-chain. It's the only contract a consumer needs to talk to in order to trust off-chain oracle data.
+Source: [`molpha/evm-verifier`](https://github.com/molpha/evm-verifier) · Solidity `0.8.31` · Cancun · Apache-2.0
+
+The EVM Verifier is a **stateless** on-chain check: given a `DataUpdate` and an aggregate Schnorr signature, it answers one question — *did enough selected Molpha nodes sign this exact payload under the stated registry version?* It does not store feeds, rounds, or consumed updates. Your contract owns freshness, replay, feed authorization, and value decoding.
 
 <Note>
-**Solana is the canonical chain.** Jobs, staking, deposits, rewards, and the authoritative node registry live on Solana. Each EVM deployment carries only a *mirror* of the node public-key set (versioned snapshots) plus this lightweight verifier. It stores **no** job, round, or feed state — everything it needs arrives in calldata and is checked cryptographically.
+**Solana is the canonical chain.** Feeds, staking, and the authoritative node registry live on Solana. Each EVM deployment mirrors the node public-key set as versioned SSTORE2 snapshots and exposes `verify` as a `view` function. The signed message intentionally omits `chainId`, so one gateway payload verifies on every supported EVM chain.
 </Note>
 
-## One signature, every chain
+## Quick start
 
-The Molpha signed message deliberately **omits `chainId`**. The node network signs `(jobId, value, timestamp, …)` once, and every EVM verifier checks that exact same message — no re-signing, no chain-specific payload. This is what lets a single signed result be consumed across every supported chain.
+1. Pin a deployed verifier address from [Deployments](/verifiers/deployments).
+2. Map a gateway `DataUpdateResult` with [`buildEvmVerifierArgs`](/sdk/reference#buildevmverifierargs) (or build the structs yourself).
+3. Call `verify` and **require the boolean** — a bad signature returns `false`, it does not revert.
+4. Enforce your own freshness / replay / `feedId` checks before using `value`.
 
-## What the Verifier does
+```solidity
+import {IVerifier} from "evm-verifier/interfaces/IVerifier.sol";
 
-<CardGroup cols={2}>
-  <Card title="Node registry" icon="users">
-    Mirrors up to 256 oracle nodes, storing their secp256k1 public keys in gas-efficient SSTORE2 blobs. Every add/remove creates a new immutable registry version.
-  </Card>
-  <Card title="Deterministic selection" icon="dice">
-    Derives the per-round signer group from a seed bound to the data payload, so callers cannot grind which nodes are eligible to sign.
-  </Card>
-  <Card title="Plain-sum aggregation" icon="key">
-    Reconstructs the coalition public key by summing the keys of the actual signers, then verifies one Schnorr signature against it.
-  </Card>
-  <Card title="Stateless verification" icon="shield-check">
-    `verify` is a `view` call. The signed payload is self-contained and permissionlessly verifiable on any supported EVM chain.
-  </Card>
-</CardGroup>
+IVerifier verifier = IVerifier(VERIFIER);
 
-The full verification pipeline, signer-selection algorithm, and domain separators are shared by every Molpha chain and documented once in [Cryptography](/protocol/cryptography). On EVM, the final curve check reuses the `ecrecover` precompile, which recovers precisely the `s·G − e·P` point the Schnorr check needs.
-
----
-
-## Core concepts
-
-### Registry versions
-
-The node set is **append-only and versioned**. Each version is an immutable SSTORE2 snapshot of the key set; `addNode` / `removeNode` writes a brand-new snapshot, so the registry version increases by one on every mutation. Historical snapshots are never mutated, so **a payload signed against an older registry version stays permanently verifiable**.
-
-- Index `0` of each snapshot is the **plain-sum aggregate key** of all nodes in that version.
-- Indices `1 .. nodeCount` hold the individual node keys.
-- A `DataUpdate` is always verified against the exact `registryVersion` it was signed for, even when newer versions exist.
-
-The protocol caps a registry at **256 nodes** — exactly what a single 256-bit `signersBitmap` can address.
-
-### Redundancy buffer and group size
-
-For each round the contract selects a signer group slightly larger than the strict threshold, so a few nodes can drop out without failing the round:
-
-```text
-groupSize = min(signaturesRequired + redundancyBuffer, nodeCount)
+require(verifier.verify(update, sig), "Molpha: invalid signature");
+require(update.feedId == EXPECTED_FEED, "Molpha: wrong feed");
+require(block.timestamp - update.canonicalTimestamp <= MAX_STALENESS, "Molpha: stale");
+// decode update.value and settle
 ```
 
-`redundancyBuffer` is a protocol-admin parameter. The actual signers must be a subset of this selected group, and there must be at least `signaturesRequired` of them.
-
-### Signers bitmap
-
-Participation is encoded as a `uint256` bitmap: **bit `i-1` is set iff the 1-based node index `i` signed.** With at most 256 nodes, a single `uint256` is always sufficient.
+Full consumer walkthrough: [Verify on EVM](/guides/verify-on-evm).
 
 ---
 
-## Data structures
+## What the contract does (and does not)
 
-These are defined in `IVerifier`.
+| Does | Does not |
+| --- | --- |
+| Mirror up to 256 node pubkeys in versioned SSTORE2 blobs | Aggregate signatures off-chain or publish feed values |
+| Derive a deterministic per-round signer group | Enforce timestamp freshness or replay windows |
+| Sum submitted signers' keys and check one Schnorr signature via `ecrecover` | Decide whether a `feedId` is authorized for your app |
+| Keep historical registry versions permanently verifiable | Persist that an update was consumed |
 
-### `DataUpdate` — the signed result payload
+Shared crypto (selection, message hash, Schnorr identity): [Cryptography](/protocol/cryptography).
+
+---
+
+## Install / depend on the contracts
+
+```bash
+git clone --recurse-submodules https://github.com/molpha/evm-verifier.git
+cd evm-verifier
+forge build
+forge test
+```
+
+As a Foundry dependency (example remapping):
+
+```toml
+# foundry.toml / remappings.txt
+evm-verifier/=lib/evm-verifier/src/
+```
+
+```solidity
+import {IVerifier} from "evm-verifier/interfaces/IVerifier.sol";
+import {Verifier} from "evm-verifier/Verifier.sol";
+```
+
+Key paths in the repo:
+
+| Path | Purpose |
+| --- | --- |
+| `src/Verifier.sol` | Registry + `verify` |
+| `src/interfaces/IVerifier.sol` | Structs, errors, events, API |
+| `src/libs/LibSchnorr.sol` | secp256k1 Schnorr via `ecrecover` |
+| `src/libs/NodeGroupBitmapLib.sol` | Unbiased signer-group derivation |
+| `script/Deploy.s.sol` | CREATE2 deploy |
+| `script/AddNode.s.sol` | Single / batch node registration |
+
+---
+
+## Calldata: structs
+
+Defined in `IVerifier`.
+
+### `DataUpdate`
 
 ```solidity
 struct DataUpdate {
-    bytes32 jobId;              // chain-agnostic identifier of the data task
-    uint32  registryVersion;   // node-set snapshot the signature is bound to
-    uint32  signaturesRequired;// minimum signers (threshold) for this update
-    bytes32 value;             // the signed result value (encoding is job-defined)
-    uint64  canonicalTimestamp;// round timestamp (part of the signed message)
+    bytes32 feedId;              // chain-agnostic feed id
+    uint32  registryVersion;     // snapshot the signature was built against
+    uint32  signaturesRequired;  // threshold for this update
+    bytes32 value;               // opaque 32-byte result (feed-defined encoding)
+    uint64  canonicalTimestamp;  // unix seconds; part of the signed message
 }
 ```
 
-### `SchnorrSignature` — the aggregate signature
+### `SchnorrSignature`
 
 ```solidity
 struct SchnorrSignature {
-    bytes32 signature;     // aggregate Schnorr scalar s
-    address commitment;    // eth-address of the nonce point R
-    uint256 signersBitmap; // bit (i-1) set iff 1-based signer index i participated
+    bytes32 signature;     // aggregate Schnorr scalar `s`
+    address commitment;    // eth-address of nonce point `R`
+    uint256 signersBitmap; // bit (i-1) set iff 1-based registry index i signed
 }
 ```
 
-A gateway response maps directly onto these structs, so the SDK can build calldata from the same fields it returns.
+### Gateway → on-chain mapping
+
+| Gateway `DataUpdateResult` | On-chain field |
+| --- | --- |
+| `feedId` | `DataUpdate.feedId` |
+| `registryVersion` | `DataUpdate.registryVersion` |
+| `signaturesRequired` | `DataUpdate.signaturesRequired` |
+| `valuePacked` | `DataUpdate.value` |
+| `timestamp` | `DataUpdate.canonicalTimestamp` |
+| `s` | `SchnorrSignature.signature` |
+| `commitmentAddr` | `SchnorrSignature.commitment` |
+| `signersBitmap` | `SchnorrSignature.signersBitmap` |
+
+```ts
+import { buildEvmVerifierArgs } from "@molpha/sdk";
+
+const { dataUpdate, schnorrSignature } = buildEvmVerifierArgs(result);
+// pass into verifier.verify(dataUpdate, schnorrSignature) via ethers / viem / eth_call
+```
 
 ---
 
-## Verifying a data update
+## `verify`
 
 ```solidity
 function verify(
@@ -101,24 +137,144 @@ function verify(
 ) external view returns (bool isVerified);
 ```
 
-`verify` is a **`view`** function. It returns `true` for a valid signature and `false` for a cryptographically invalid one. **Structural / policy violations revert** (bad registry version, empty registry, zeroed inputs, too few signers, or a signer outside the selection set). Integrators should treat a revert and a `false` return as equivalent "not verified" outcomes.
+### Pipeline (in order)
 
-The checks run in order:
-
-1. The `registryVersion` exists and has at least one node.
-2. Structural guards: non-zero `signaturesRequired`, `signersBitmap`, `signature`, `commitment`.
-3. `popcount(signersBitmap) ≥ signaturesRequired`.
-4. Signers ⊆ the deterministically derived selection set.
-5. The aggregate Schnorr signature over the canonical message.
+1. `registryVersion < registryPointers.length` (else `InvalidRegistryVersion`).
+2. Snapshot has at least one node (else `NoNodes`).
+3. Structural guards: non-zero `signaturesRequired`, `signersBitmap`, `signature`, `commitment`; `signature < Q` (else custom errors).
+4. `popcount(signersBitmap) >= signaturesRequired` (else `NotEnoughSignatures`).
+5. Derive selection set; require `signersBitmap ⊆ selectionBitmap` (else `SignerNotSelected`).
+6. Sum signers' public keys in ascending index order; verify Schnorr over the canonical message.
+7. Return `true` / `false` for crypto validity — **do not treat `false` as a revert**.
 
 <Warning>
-`verify` returns a boolean for a bad signature rather than reverting. Consumer contracts **must** check the return value (e.g. `require(verifier.verify(...))`), or they will silently accept unverified data.
+Always `require(verifier.verify(...))`. A cryptographically invalid signature returns `false` without reverting. Structural / policy failures revert with `IVerifier` errors.
 </Warning>
+
+### Signed message
+
+```text
+message = keccak256(abi.encodePacked(
+  keccak256("MOLPHA_MESSAGE_V1"),
+  feedId,
+  registryVersion,
+  signaturesRequired,
+  signersBitmap,
+  value,
+  canonicalTimestamp
+))
+```
+
+No `chainId`. Same digest verifies on every EVM deployment.
+
+### Selection seed and group size
+
+```text
+selectionSeed = keccak256(abi.encodePacked(
+  keccak256("MOLPHA_SELECTION_V1"),
+  feedId,
+  registryVersion,
+  canonicalTimestamp
+))
+
+groupSize = min(signaturesRequired + redundancyBuffer, nodeCount)
+```
+
+`NodeGroupBitmapLib` expands the seed with `keccak256(seed ‖ keccak256("MOLPHA_SELECTION_DERIVE") ‖ counter)`, samples without replacement (bias-rejecting `uint32` limbs), and uses the complement path when `groupSize > nodeCount / 2`.
+
+### Bitmap convention
+
+**Bit `i - 1` ↔ 1-based registry index `i`.** Index `0` in each snapshot is the running aggregate key, not a signer. Node indices can change after `removeNode` (swap-and-pop); resolve live indices with `getNodeIndex(address)`.
 
 ---
 
-## Consumer integration
+## Consumer checklist
 
-See [Verify on EVM](/guides/verify-on-evm) for the full consumer-contract walkthrough and integration checklist. Because the Verifier is stateless with respect to feeds, **your contract owns any freshness, replay, or value-bounds policy** — `verify` only attests that the node network signed `(jobId, value, timestamp, …)` against a given registry version.
+Do these in your contract (or off-chain client) around every `verify` call:
 
-A successful `verify` proves at least `signaturesRequired` keys from the mirrored `registryVersion` signed the exact `DataUpdate`, and that every signer is inside the deterministic selection set. It does **not** prove freshness, prevent replay, or independently prove that the payload corresponds to genuine Solana job state. Those guarantees — and the protocol's admin powers — are covered in the [Security Model](/protocol/security-model).
+1. **Require** the boolean return value.
+2. **Authorize** `feedId` (and optionally `signaturesRequired`) for your product.
+3. **Freshness** — compare `canonicalTimestamp` to `block.timestamp` (or your clock).
+4. **Replay** — track last timestamp / digest if the same valid payload must not settle twice.
+5. **Decode** `value` with your feed's encoding; treat it as opaque `bytes32` until then.
+6. Pass the **exact** `registryVersion` used when the nodes signed (historical versions stay valid).
+
+---
+
+## Registry & admin API
+
+Only `protocolAdmin` can mutate the registry or redundancy buffer.
+
+| Function | Notes |
+| --- | --- |
+| `addNode(bytes compressedPubKey, SchnorrProof pop)` | Decompresses key, checks PoP, appends, writes new SSTORE2 snapshot, bumps version |
+| `removeNode(address node)` | Subtracts key, swap-and-pop if not tail, new snapshot + version |
+| `setRedundancyBuffer(uint256)` | Caps at `MAX_NODES` (256) |
+| `transferProtocolAdmin(address)` | Non-zero address required |
+
+### Proof-of-possession (registration only)
+
+```text
+popDigest = keccak256(abi.encodePacked(
+  keccak256("MOLPHA_VERIFIER_V1"),
+  address(this),
+  compressedPubKey
+))
+```
+
+PoP is verified at `addNode` and is not part of `verify`. Nodes register per deployment (address is in the digest).
+
+### Reads
+
+| Function | Returns |
+| --- | --- |
+| `getRegistryVersion()` | Latest version index |
+| `getRegistryPointer()` / `getRegistryPointer(uint256)` | SSTORE2 pointer(s) |
+| `getTotalNodes()` | Active node count (latest) |
+| `isNode(address)` / `getNodeIndex(address)` | Membership / 1-based index (`0` if inactive) |
+| `getAggregateKey()` | Plain-sum `(x, y)` of the latest set |
+| `getNodesSetHash()` | `keccak256` of the latest encoded blob |
+| `protocolAdmin` / `redundancyBuffer` | Public getters |
+
+Registry version `0` is the empty constructor snapshot. See [Registry Versions](/concepts/registry-versions).
+
+---
+
+## Errors
+
+`verify` / admin paths revert with these `IVerifier` errors when inputs are malformed or policy fails. Invalid crypto after passing guards returns `false` instead.
+
+| Error | Typical cause |
+| --- | --- |
+| `InvalidRegistryVersion` | Version ≥ pointer array length |
+| `NoNodes` | Empty registry for that version |
+| `ZeroSignaturesRequired` / `ZeroSignersBitmap` / `ZeroSignature` / `ZeroCommitment` | Zeroed fields |
+| `InvalidSignatureScalar` | `s >= Q` |
+| `NotEnoughSignatures` | Bitmap popcount below threshold |
+| `SignerNotSelected` | Signer outside derived selection set |
+| `InvalidAggregatePublicKey` | Coalition sum at infinity |
+| `NotProtocolAdmin` / `ZeroAdmin` / `NodeAlreadyAdded` / `NotNode` / `MaxNodesReached` / `InvalidPoP` / … | Admin / registration failures |
+
+---
+
+## Gas (reference)
+
+Measured with `FOUNDRY_PROFILE=gas forge test -vv --match-contract VerifierGasTest` (Solidity `0.8.31`, Cancun, IR, 1M optimizer runs). Fixed **128-node** registry, redundancy buffer `2`. **Total** = execution + calldata + 21 000 base.
+
+| Signers | Cold execution | Cold total | Warm execution | Warm total |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 10 735 | 33 927 | 10 458 | 33 650 |
+| 3 | 15 891 | 39 107 | 15 346 | 38 550 |
+| 5 | 19 182 | 42 398 | 18 357 | 41 585 |
+| 9 | 25 957 | 49 209 | 24 861 | 48 125 |
+| 18 | 40 181 | 63 505 | 38 548 | 61 848 |
+
+Cost scales mainly with the number of keys summed for the coalition, not total registry size (selection + key reads dominate).
+
+---
+
+## Security surface
+
+- Treat every deployment as a **verification component**, not a full oracle product. Review registry ops, consumer freshness/replay, and feed authorization before production use.
+- Report vulnerabilities per [`SECURITY.md`](https://github.com/molpha/evm-verifier/blob/main/SECURITY.md) — not public GitHub issues.
+- Protocol trust assumptions: [Security Model](/protocol/security-model).

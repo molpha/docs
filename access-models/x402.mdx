@@ -1,0 +1,119 @@
+---
+title: "x402 Escrow"
+description: "Pay-per-request agent access: HTTP 402 payment loop plus on-chain AgentEscrow settlement."
+icon: "credit-card"
+---
+
+**x402 escrow** is the pay-per-request option for AI agents. There is no monthly subscription: the agent (or funder) deposits USDC into a per-gateway escrow ATA, the gateway returns a standard `402 Payment Required` envelope when the balance is short, and settlement debits the escrow after a successful round.
+
+<Note>
+**x402** (HTTP) and **AgentEscrow** (Solana PDA + ATA) are one product. Docs previously listed them as separate models; use this page for both.
+</Note>
+
+This is the alternative to [Delegates](/access-models/delegates). Use x402 escrow when the agent should pay only for the rounds it runs.
+
+## Use x402 escrow when
+
+- An agent needs verified data without a Molpha subscription.
+- Payment should be exact USDC per round, priced by quorum.
+- The agent can handle `402` envelopes and fund an escrow ATA.
+- You want settlement through `settle_agent_round`.
+
+## On-chain escrow
+
+```rust
+#[account]
+pub struct AgentEscrow {
+    pub authority: Pubkey,   // Ed25519 signer of AgentRequestAuth
+    pub status: AgentStatus, // Active | Paused
+    pub bump: u8,
+}
+```
+
+Seeds:
+
+```text
+["molpha_agent", authority, gateway]
+```
+
+USDC sits in `ATA(escrow PDA, USDC)`. The escrow account is created lazily on the first successful `settle_agent_round`.
+
+In the common x402 loop, payer and authority are the same key:
+
+```text
+authority == payer
+ATA(PDA(["molpha_agent", payer, gateway]), USDC)
+```
+
+Anyone can fund the ATA; only `authority` can authorize requests.
+
+## Flow
+
+1. Agent calls `POST /v1/agent/execute` with exact `amount` equal to the computed round price.
+2. Gateway checks escrow ATA balance (minus reserved unsettled spend).
+3. If underfunded, gateway returns a standard x402 `402 Payment Required` envelope with `payTo` = escrow ATA.
+4. Payer sends USDC to `payTo`, signs `AgentRequestAuth`, and retries with the **same** `canonical_timestamp`.
+5. Gateway serves the round and records it in the settlement outbox.
+6. `settle_agent_round` verifies `AgentRequestAuth`, transfers the locked price to the treasury, and writes an agent round-record PDA.
+
+Maintaining a public Solana `Feed` still requires a separate permissionless `submit_data_update`.
+
+## Request authentication
+
+The escrow `authority` signs:
+
+```text
+sha256(
+  "MOLPHA_AGENT_REQAUTH_V1" ||
+  borsh(AgentRequestAuth{
+    agent,                 // escrow PDA
+    gateway,               // gateway PDA
+    feed_id,
+    canonical_timestamp,   // u64
+    amount                 // exact settlement price
+  })
+)
+```
+
+`amount` must equal:
+
+```text
+price = agent_round_base + signatures_required * agent_round_per_sig
+```
+
+from `ProtocolConfig`. The gateway rejects any request where `amount ≠ price` (`400`, mirroring on-chain `AmountMismatch`).
+
+Replay protection is the unique agent round-record PDA:
+
+```text
+["molpha_agent_round", authority, gateway, api_config_hash, signatures_required, canonical_timestamp_le]
+```
+
+## Failure handling
+
+| Status | Meaning |
+| --- | --- |
+| `402` | Escrow ATA balance is below reserved unsettled amount plus quoted price |
+| `400` | Validation failure, including `amount` ≠ price or stale `registry_version` |
+| `401` | Missing or invalid `agent_request_auth_sig` on a funded request |
+| `403` | Escrow paused or payer/authority mismatch |
+| `409` | Duplicate `canonical_timestamp` for this feed identity |
+| `503` | Node round timed out or selected nodes failed to reach quorum |
+
+## vs Delegate
+
+| | x402 escrow | Delegate |
+| --- | --- | --- |
+| Requires subscription | No | Yes |
+| Payment | Escrow ATA USDC | Prepaid plan |
+| Gateway | `/v1/agent/execute` | `/v1/round/execute` |
+| Settlement ix | `settle_agent_round` | `settle_round_receipt` |
+
+Full HTTP schema: [Gateway API](/protocol/gateway#x402-agent-rounds).
+
+## Security notes
+
+- Retry the identical request after payment (same `canonical_timestamp`).
+- Treat gateway balance views as advisory until settlement finalizes.
+- Verify the returned signed payload before application use.
+- Enforce freshness on `canonicalTimestamp`.

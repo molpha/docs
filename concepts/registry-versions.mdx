@@ -35,4 +35,4 @@ On EVM, each snapshot is one immutable **SSTORE2 blob**; the contract keeps an a
 `removeNode` changes node indices. Always resolve a node's current index from the contract (`getNodeIndex`) rather than caching it.
 </Warning>
 
-On Solana, the registry lives in the `RegistryState` PDA (current/previous version + counts) with one `RegistryIndex` PDA per active node slot holding that node's secp256k1 public key. A payload's `registry_version` must be the current version or a grace-valid previous version (`InvalidRegistryVersion` otherwise).
+On Solana, the registry lives in the `RegistryState` PDA (current/previous version + counts) with one `Node` PDA per active slot (`["molpha_node", index_le]`) holding that node's secp256k1 public key. For `submit_data_update`, a payload's `registry_version` must be the current version or a grace-valid previous version (`InvalidRegistryVersion` otherwise). Settlement instructions (`settle_round_receipt`, `settle_agent_round`) accept the current registry version only.

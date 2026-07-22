@@ -11,7 +11,7 @@ A consumer contract receives a `DataUpdate` + `SchnorrSignature` in calldata, ve
 
 ```text
 gateway DataUpdateResult       →  IVerifier.DataUpdate
-  jobId, registryVersion,          jobId, registryVersion,
+  feedId, registryVersion,          feedId, registryVersion,
   signaturesRequired,              signaturesRequired,
   valuePacked, timestamp           value, canonicalTimestamp
 
@@ -68,7 +68,7 @@ contract MyConsumer {
 
 - **Enforce freshness** against `canonicalTimestamp` — the verifier is stateless and has no replay window of its own.
 - **Prevent replay** if your flow can be re-executed — the same valid payload verifies forever.
-- **Validate `jobId` and `signaturesRequired`** match the feed you intend to consume.
+- **Validate `feedId` and `signaturesRequired`** match the feed you intend to consume.
 
 ## Gas
 

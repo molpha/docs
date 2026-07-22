@@ -5,20 +5,62 @@ description: "Exported types, derivation helpers, and the framework-agnostic EVM
 
 ## `RequestSignedDataOptions`
 
-Options for `MolphaGateway.requestSignedData` and the second argument to `MolphaSDK.requestAndSubmit`:
+Options for `MolphaGateway.requestSignedData` and the second argument to `MolphaSDK.requestAndSubmit` (omit `feedId` there — it is the first argument):
 
 ```ts
 export interface RequestSignedDataOptions {
-  apiConfig: object;
+  feedId: string;
+  signaturesRequired: number;
+  apiConfig: APIConfig;
+  subscriptionOwner?: string;
+  consumerAuthority?: string;
+  /** Override gateway auth signer for this call. */
+  signer?: Signer;
+  /** Encrypt private API secrets for selected nodes. */
+  encrypt?: { secrets: Record<string, string> };
+  /** Max accepted value age in seconds. Default 60. */
   maxAge?: number;
+  /** Each retry re-rolls the timestamp. Default 15. */
+  maxRetries?: number;
+  /** Per-request timeout in ms. Default 5000. */
+  timeoutMs?: number;
+  /** Reuse registry + nodes from `prepareContext` (opt-in cache). */
+  context?: Partial<RoundContext>;
+  verifyNodeKeys?: NodeKeyVerifier;
+  /** Unsafe: skip node-key auth for private APIs. Default false. */
+  allowUnverifiedNodeKeysForPrivateApi?: boolean;
 }
 ```
 
-`apiConfig` must match the job's committed configuration. `maxAge` (seconds) lets the gateway return a cached result when one is fresh enough.
+`apiConfig` must match the feed's committed configuration (same shape passed to `deriveApiConfigHash`). `maxAge` (seconds) lets the gateway return a cached result when one is fresh enough.
+
+## `APIConfig`
+
+```ts
+export interface APIConfig {
+  url: string;
+  method?: "GET" | "POST" | "PUT";
+  headers?: Record<string, string>;
+  responseParser: string;
+  valueTransform?: string;
+}
+```
+
+The SDK canonicalizes missing fields (`method` → `"GET"`, `headers` → `{}`, `valueTransform` → `""`) before hashing and before posting to the gateway.
 
 ## `RoundContext`
 
-Cached registry version, node set, and job config produced by `sdk.gateway.prepareContext(jobId)`. Subsequent `requestSignedData` calls reuse this context so each round is a single gateway POST.
+Returned by `sdk.gateway.prepareContext(feedId)` — pass it back via `requestSignedData({ ..., context })` so each round is a single gateway POST:
+
+```ts
+export interface RoundContext {
+  registryVersion: number;
+  redundancyBuffer: number;
+  nodes: Node[];
+}
+```
+
+Caching is opt-in. Refresh when the on-chain registry version changes; a stale context produces a result the chain will reject.
 
 ## `DataUpdateResult`
 
@@ -26,7 +68,7 @@ A completed gateway round, ready to submit on-chain:
 
 ```ts
 export interface DataUpdateResult {
-  jobId: string;
+  feedId: string;
   /** Human-readable value. */
   value: string;
   /** 32-byte packed value, hex. */
@@ -48,34 +90,46 @@ export interface DataUpdateResult {
 
 ## `MolphaWallet`
 
-The wallet interface the SDK expects — satisfied by keypair-backed wallets (`walletFromKeypairFile`) or browser wallet adapters:
+Anchor `Wallet` plus optional gateway auth. Keypair-backed wallets (`walletFromKeypairFile`) derive auth from `Wallet.payer` automatically; browser adapters should supply `signAuthMessage`:
 
 ```ts
-interface MolphaWallet {
-  publicKey: PublicKey;
-  signTransaction(tx): Promise<Transaction>;
-  signAllTransactions(txs): Promise<Transaction[]>;
-  signAuthMessage(msg: Uint8Array): Promise<Uint8Array>;
-}
+type MolphaWallet = Wallet & {
+  signAuthMessage?: (msg: Uint8Array) => Promise<Uint8Array>;
+};
 ```
 
 ## `PlanType`
 
 ```ts
-enum PlanType { Basic = 0, Standard = 1, Professional = 2, Enterprise = 3 }
+enum PlanType {
+  Basic = 0,
+  // Standard / Professional / Enterprise reserved (on-chain ordinals 1–3)
+}
 ```
+
+The SDK currently exports `Basic`. On-chain plan IDs remain `0…3`.
 
 ## Derivation helpers
 
 ```ts
-// jobId = keccak256("MOLPHA_JOB_V1" || owner || apiConfigHash)
-export function deriveJobId(owner: Uint8Array, apiConfigHash: Uint8Array): Uint8Array;
+// feedId = keccak256("MOLPHA_JOB_V1" || owner || apiConfigHash || [signaturesRequired])
+export function deriveFeedId(
+  owner: Uint8Array,
+  apiConfigHash: Uint8Array,
+  signaturesRequired: number,
+): Uint8Array;
 
-// 32-byte keccak commitment to an off-chain API configuration
-export function deriveApiConfigHash(apiConfig: object): Uint8Array;
+export function deriveFeedIdString(
+  owner: Uint8Array,
+  apiConfigHash: Uint8Array,
+  signaturesRequired: number,
+): string;
+
+// 32-byte keccak commitment to the canonicalized API config
+export function deriveApiConfigHash(apiConfig: APIConfig): Uint8Array;
 ```
 
-Both inputs to `deriveJobId` must be exactly 32 bytes (`owner` is a Solana public key).
+`owner` and `apiConfigHash` must be exactly 32 bytes. `signaturesRequired` is encoded as one byte.
 
 ## `buildEvmVerifierArgs`
 
@@ -83,7 +137,7 @@ Converts a `DataUpdateResult` into the two structs the EVM verifier's `verify()`
 
 | Gateway `DataUpdateResult` | EVM struct field |
 |---|---|
-| `jobId` | `DataUpdate.jobId` |
+| `feedId` | First `DataUpdate` bytes32 field |
 | `registryVersion` | `DataUpdate.registryVersion` |
 | `signaturesRequired` | `DataUpdate.signaturesRequired` |
 | `valuePacked` | `DataUpdate.value` |
@@ -92,7 +146,7 @@ Converts a `DataUpdateResult` into the two structs the EVM verifier's `verify()`
 | `commitmentAddr` | `SchnorrSignature.commitment` |
 | `signersBitmap` | `SchnorrSignature.signersBitmap` |
 
-See [Verify on EVM](/guides/verify-on-evm) for the consumer-contract side.
+Pass the `feedId` bytes as the first `DataUpdate` field. See [Verify on EVM](/guides/verify-on-evm) for the consumer-contract side.
 
 ## `buildStarknetVerifierArgs`
 
@@ -100,7 +154,7 @@ Converts a `DataUpdateResult` into the Cairo verifier's calldata structs, with n
 
 | Gateway `DataUpdateResult` | Cairo struct field | Cairo type |
 |---|---|---|
-| `jobId` | `data_update.job_id` | `u256` |
+| `feedId` | `data_update.feed_id` | `u256` |
 | `registryVersion` | `data_update.registry_version` | `u32` |
 | `signaturesRequired` | `data_update.signatures_required` | `u32` |
 | `valuePacked` | `data_update.value` | `u256` |

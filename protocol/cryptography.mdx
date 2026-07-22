@@ -8,9 +8,9 @@ This is the authoritative reference for Molpha's signing math: how a round is si
 ## The verification pipeline
 
 ```text
-selectionSeed   = keccak256("MOLPHA_SELECTION_V1" ‖ jobId ‖ registryVersion ‖ canonicalTimestamp)
+selectionSeed   = keccak256("MOLPHA_SELECTION_V1" ‖ feedId ‖ registryVersion ‖ canonicalTimestamp)
 selectionBitmap = deriveWithoutReplacement(selectionSeed, nodeCount, groupSize)
-message         = keccak256("MOLPHA_MESSAGE_V1" ‖ jobId ‖ registryVersion ‖
+message         = keccak256("MOLPHA_MESSAGE_V1" ‖ feedId ‖ registryVersion ‖
                             signaturesRequired ‖ signersBitmap ‖ value ‖ canonicalTimestamp)
 X_coalition     = Σ Xᵢ   for each signer i in signersBitmap        (plain EC sum)
 challenge e     = keccak256(Pₓ ‖ Pₚ ‖ message ‖ commitment) mod Q
@@ -55,7 +55,7 @@ The one deliberate cross-chain divergence lives here: EVM hashes its address as 
 For each round, a pseudo-random subset of nodes (the **selection set**) is derived deterministically from on-chain inputs only, so anyone — including every verifier — can independently reproduce which nodes were eligible to sign. A caller cannot grind a favorable signer set.
 
 ```text
-selectionSeed = keccak256(SELECTION_SEED_PREFIX, jobId, registryVersion, canonicalTimestamp)
+selectionSeed = keccak256(SELECTION_SEED_PREFIX, feedId, registryVersion, canonicalTimestamp)
 groupSize     = min(signaturesRequired + redundancyBuffer, nodeCount)
 ```
 
@@ -96,6 +96,6 @@ All domain separators are `keccak256` of their ASCII labels and are identical ac
 
 The on-chain verifiers fix everything the signed payload must satisfy; the off-chain signing session (nonce lifecycle, message transport, retry semantics) is run by the node network and gateway. What is guaranteed regardless of transport:
 
-- The signed message covers `(jobId, registryVersion, signaturesRequired, signersBitmap, value, canonicalTimestamp)` under `MOLPHA_MESSAGE_V1`.
-- Signers must be a subset of the deterministic selection set derived from `(jobId, registryVersion, canonicalTimestamp)`.
+- The signed message covers `(feedId, registryVersion, signaturesRequired, signersBitmap, value, canonicalTimestamp)` under `MOLPHA_MESSAGE_V1`.
+- Signers must be a subset of the deterministic selection set derived from `(feedId, registryVersion, canonicalTimestamp)`.
 - At least `signaturesRequired` signers must participate; the signature is a plain-sum aggregate over exactly the keys in `signersBitmap`.

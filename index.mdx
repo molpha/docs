@@ -1,48 +1,94 @@
 ---
-title: "Molpha Oracle Protocol"
-description: "Turning any API into verifiable on-chain data"
+title: "Molpha"
+description: "Build applications that can prove where their data came from."
 ---
 
-Molpha is a pull-native oracle protocol. Independent nodes fetch data from any HTTP API, converge on a canonical value, and sign it once with a threshold aggregate signature — verifiable on Solana, EVM, and Starknet without per-chain feeds or bridges.
+# Build with verifiable data.
 
-## Choose your path
+Every application depends on external APIs. Until now, consumers had to trust whoever fetched the data.
+
+Molpha lets you prove it.
+
+Turn any HTTP API into cryptographically verifiable data that can be consumed by AI agents, smart contracts, or backend services. Every response is independently fetched, threshold-signed by the Molpha network, and verifiable anywhere.
+
+> One API. One threshold signature. Every supported chain.
 
 <CardGroup cols={3}>
-  <Card icon="book-open" href="/getting-started/introduction" title="Learn the protocol">
-    What Molpha is, how one signature works across chains, and where Solana fits in the stack.
+  <Card icon="robot" href="/quickstarts/ai-agents" title="AI Agents">
+    Give AI agents access to verifiable external data through MCP with built-in payment and verification.
   </Card>
-  <Card icon="rocket" href="/getting-started/quickstart" title="Quickstart">
-    Get a verified feed on Solana Devnet — with the TypeScript SDK or the MCP server in Cursor, Claude, or Codex.
+
+  <Card icon="file-contract" href="/quickstarts/smart-contracts" title="Smart Contracts">
+    Verify signed API responses on EVM, Solana or Starknet without trusting gateways or relayers.
   </Card>
-  <Card icon="diagram-project" href="/getting-started/how-it-works" title="How it works">
-    Follow a value from an HTTP response through a signing round to on-chain verification.
+
+  <Card icon="server" href="/quickstarts/backend" title="Backends">
+    Fetch threshold-signed data from any backend service using the TypeScript SDK.
   </Card>
 </CardGroup>
 
-## Build and integrate
+---
 
-<CardGroup cols={3}>
-  <Card icon="code" href="/sdk/overview" title="TypeScript SDK">
-  Install `@molpha-oracle/sdk` for backends, automation, and custom applications.
-  </Card>
-  <Card icon="robot" href="/mcp/molpha-mcp" title="MCP server">
-    Connect AI agents to typed Molpha tools for discovery, dry-runs, and Solana writes.
-  </Card>
-  <Card icon="bolt" href="/guides/create-and-update" title="Guides">
-    Task-oriented walkthroughs for creating feeds, reading values, and verifying on EVM or Starknet.
-  </Card>
+## Why Molpha?
+
+Traditional API integrations require trusting whoever made the request.
+
+Traditional oracle networks require waiting for providers to onboard a feed.
+
+Molpha removes both.
+
+Instead of integrating with an oracle provider, you configure the API you need and receive a threshold-signed response that anyone can verify.
+
+<CardGroup cols={2}>
+<Card title="Without Molpha">
+
+- Trust the backend
+- Build custom infrastructure
+- Wait for oracle providers
+- Different integrations per chain
+- No standard flow for AI agents
+
+</Card>
+
+<Card title="With Molpha">
+
+- Verify every response
+- Any HTTP API
+- No approvals
+- Same payload everywhere
+- MCP-native for AI agents
+
+</Card>
 </CardGroup>
 
-## Go deeper
+---
+
+## Choose what you want to build
 
 <CardGroup cols={3}>
-  <Card icon="shield-check" href="/verifiers/overview" title="Verifiers">
-    On-chain verification on Solana, EVM, and Starknet — one payload, three VM families.
-  </Card>
-  <Card icon="sitemap" href="/protocol/architecture" title="Protocol">
-    Architecture, gateway protocol, cryptography, and the security model.
-  </Card>
-  <Card icon="circle-question" href="/resources/faq" title="Resources">
-    Glossary, FAQ, and release notes.
-  </Card>
+<Card icon="robot" href="/mcp/molpha-mcp" title="MCP">
+Build AI agents that can request and verify external data.
+</Card>
+
+<Card icon="code" href="/sdk/overview" title="SDK">
+Use the TypeScript SDK from any backend or application.
+</Card>
+</CardGroup>
+
+---
+
+## Learn the protocol
+
+<CardGroup cols={3}>
+<Card icon="rss" href="/concepts/feeds" title="Feeds">
+How APIs become verifiable data.
+</Card>
+
+<Card icon="wallet" href="/access-models/overview" title="Access">
+Subscriptions, Delegate and x402.
+</Card>
+
+<Card icon="sitemap" href="/protocol/architecture" title="Architecture">
+Network design, signatures and verification.
+</Card>
 </CardGroup>

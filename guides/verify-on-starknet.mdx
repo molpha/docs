@@ -7,7 +7,7 @@ The Starknet Verifier is a faithful Cairo port of the EVM pipeline: a payload si
 
 ## Build the args
 
-`buildStarknetVerifierArgs` maps a gateway `DataUpdateResult` onto the Cairo structs (`job_id`/`value` as `u256`, `commitment` as `felt252`, `signature`/`signers_bitmap` as `u256`) with no starknet.js runtime dependency.
+`buildStarknetVerifierArgs` maps a gateway `DataUpdateResult` onto the Cairo structs (`feed_id`/`value` as `u256`, `commitment` as `felt252`, `signature`/`signers_bitmap` as `u256`) with no starknet.js runtime dependency.
 
 ## Consumer contract
 
@@ -24,8 +24,8 @@ fn consume_update(
 
     // The payload is authentic. Apply YOUR policy before trusting `value`:
     //  - reject stale rounds (canonical_timestamp too old)
-    //  - guard against replay (track last accepted (job_id, timestamp))
-    //  - sanity-bound data_update.value for the job
+    //  - guard against replay (track last accepted (feed_id, timestamp))
+    //  - sanity-bound data_update.value for the feed
 }
 ```
 

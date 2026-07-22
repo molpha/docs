@@ -1,25 +1,30 @@
 ---
-title: "Quickstart"
-description: "Get a verified on-chain feed on Solana Devnet — with the TypeScript SDK or the Molpha MCP server."
+title: "Quickstart: Maintain a Feed"
+description: "Subscription-based producer flow: derive a feed ID and submit a verified update on Solana Devnet."
 icon: "rocket"
 ---
 
-Both paths reach the same outcome: a threshold-signed value verified on Solana Devnet. Pick the one that matches how you work.
+This page shows the subscription-backed producer path. There is no create-feed transaction: derive `feedId`, request signed data, and the first successful submit creates the Solana `Feed` account lazily.
 
-<CardGroup cols={2}>
-  <Card title="MCP server" icon="robot" href="#mcp-server">
-    Best for AI agents in Cursor, Claude Desktop, or Codex — exploration, dry-runs, and agent-driven workflows.
+<CardGroup cols={3}>
+  <Card title="AI Agents" icon="robot" href="/quickstarts/ai-agents">
+    First verified request through MCP — then Delegate or x402 escrow.
   </Card>
-  <Card title="TypeScript SDK" icon="code" href="#typescript-sdk">
-    Best for backends, automation, and custom UIs with `@molpha-oracle/sdk`.
+  <Card title="Smart Contracts" icon="file-contract" href="/quickstarts/smart-contracts">
+    Verify a Molpha payload inside your app.
+  </Card>
+  <Card title="Backends" icon="server" href="/quickstarts/backend">
+    Request signed data with the TypeScript SDK.
   </Card>
 </CardGroup>
+
+Both legacy paths below reach the same outcome: a threshold-signed value verified on Solana Devnet. Pick the one that matches how you work.
 
 ## Prerequisites
 
 - A Solana wallet with Devnet SOL
 - Devnet USDC for the subscription — use [Circle's faucet](https://faucet.circle.com/) (select **USDC** on **Solana Devnet**)
-- Node.js `>=20` for the MCP server, or `>=18` for the SDK
+- Node.js `>=20.19.0` for the SDK and `>=24.0.0` for the MCP server
 
 <Warning>
 Current releases target Solana Devnet and Sepolia verifier networks. Write operations spend Devnet SOL and may consume subscription quota.
@@ -45,10 +50,10 @@ The [MCP server](/mcp/molpha-mcp) exposes typed tools for AI agents over stdio. 
     SIGNER_BACKEND=memory
     OWNER_KEYPAIR=/absolute/path/to/owner-keypair.json
     SOLANA_RPC=https://api.devnet.solana.com
-    GATEWAY_ENDPOINTS=https://gateway.molpha.io
+    GATEWAY_ENDPOINTS=
     ```
 
-    The same wallet must subscribe, own jobs, and sign gateway auth messages. For Privy or Turnkey, see [signer configuration](/mcp/molpha-mcp#choose-a-signer).
+    Leave `GATEWAY_ENDPOINTS` empty to use the SDK default. The same wallet must subscribe, own feeds, and sign gateway auth messages. For Privy or Turnkey, see [signer configuration](/mcp/molpha-mcp#choose-a-signer).
   </Step>
 
   <Step title="Validate and subscribe">
@@ -75,8 +80,7 @@ The [MCP server](/mcp/molpha-mcp) exposes typed tools for AI agents over stdio. 
               "env": {
                 "SIGNER_BACKEND": "memory",
                 "OWNER_KEYPAIR": "/absolute/path/to/owner-keypair.json",
-                "SOLANA_RPC": "https://api.devnet.solana.com",
-                "GATEWAY_ENDPOINTS": "https://gateway.molpha.io"
+                "SOLANA_RPC": "https://api.devnet.solana.com"
               }
             }
           }
@@ -93,7 +97,6 @@ The [MCP server](/mcp/molpha-mcp) exposes typed tools for AI agents over stdio. 
         SIGNER_BACKEND = "memory"
         OWNER_KEYPAIR = "/absolute/path/to/owner-keypair.json"
         SOLANA_RPC = "https://api.devnet.solana.com"
-        GATEWAY_ENDPOINTS = "https://gateway.molpha.io"
         ```
       </Tab>
     </Tabs>
@@ -102,7 +105,7 @@ The [MCP server](/mcp/molpha-mcp) exposes typed tools for AI agents over stdio. 
   <Step title="Try an agent prompt">
     Ask your client to inspect the network (read-only):
 
-    > Use Molpha to inspect the current oracle capabilities. Summarize the registry version, node count, supported chains, and gateway endpoints. Do not make any writes.
+    > Use Molpha to inspect the current protocol capabilities. Summarize the registry version, node count, supported chains, and gateway endpoints. Do not make any writes.
 
     More example prompts are on the [MCP server](/mcp/molpha-mcp#example-prompts) page.
   </Step>
@@ -114,38 +117,44 @@ Subscription and extension operations stay in the provisioning CLI because they 
 
 ## TypeScript SDK
 
-Install [`@molpha-oracle/sdk`](https://www.npmjs.com/package/@molpha-oracle/sdk) v0.4.0 and wire the gateway and Solana clients behind one wallet. The [SDK overview](/sdk/overview) covers the full API surface.
+Install [`@molpha/sdk`](https://www.npmjs.com/package/@molpha/sdk) v0.1.0 and wire the gateway and Solana clients behind one wallet. The [SDK overview](/sdk/overview) covers the full API surface.
 
 <Steps>
   <Step title="Install">
     <Tabs>
       <Tab title="pnpm">
         ```bash
-        pnpm add @molpha-oracle/sdk @solana/web3.js @coral-xyz/anchor @solana/spl-token bn.js
+        pnpm add @molpha/sdk @anchor-lang/core bn.js
         ```
       </Tab>
       <Tab title="npm">
         ```bash
-        npm install @molpha-oracle/sdk @solana/web3.js @coral-xyz/anchor @solana/spl-token bn.js
+        npm install @molpha/sdk @anchor-lang/core bn.js
         ```
       </Tab>
       <Tab title="yarn">
         ```bash
-        yarn add @molpha-oracle/sdk @solana/web3.js @coral-xyz/anchor @solana/spl-token bn.js
+        yarn add @molpha/sdk @anchor-lang/core bn.js
         ```
       </Tab>
     </Tabs>
   </Step>
 
-  <Step title="Initialize, subscribe, and create a job">
+  <Step title="Initialize, subscribe, and derive a feed">
     ```ts
-    import { Connection } from "@solana/web3.js";
-    import { MolphaSDK, PlanType, deriveApiConfigHash } from "@molpha-oracle/sdk";
-    import { walletFromKeypairFile } from "@molpha-oracle/sdk/utils";
+    import { web3 } from "@anchor-lang/core";
+    import {
+      MolphaSDK,
+      PlanType,
+      deriveApiConfigHash,
+      deriveFeedIdString,
+    } from "@molpha/sdk";
+    import { walletFromKeypairFile } from "@molpha/sdk/utils";
 
+    const wallet = walletFromKeypairFile("~/.config/solana/id.json");
     const sdk = new MolphaSDK({
-      connection: new Connection("https://api.devnet.solana.com", "confirmed"),
-      wallet: walletFromKeypairFile("~/.config/solana/id.json"),
+      connection: new web3.Connection("https://api.devnet.solana.com", "confirmed"),
+      wallet,
     });
 
     const plan = await sdk.solana.getPlan(PlanType.Basic);
@@ -158,34 +167,40 @@ Install [`@molpha-oracle/sdk`](https://www.npmjs.com/package/@molpha-oracle/sdk)
       responseParser: "$.price",
     };
 
-    const { jobId } = await sdk.solana.createJob({
-      apiConfigHash: deriveApiConfigHash(apiConfig),
-      signaturesRequired: 3,
-      decimals: 8,
-    });
+    const signaturesRequired = 3;
+    const feedId = deriveFeedIdString(
+      wallet.publicKey.toBytes(),
+      deriveApiConfigHash(apiConfig),
+      signaturesRequired,
+    );
     ```
   </Step>
 
   <Step title="Request a signed result and submit">
     ```ts
-    const { signature } = await sdk.requestAndSubmit(jobId, { apiConfig });
+    const { result, signature } = await sdk.requestAndSubmit(feedId, {
+      apiConfig,
+      signaturesRequired,
+    });
     console.log("Submitted:", signature);
+    console.log("Gateway value:", result.value);
 
-    const feed = await sdk.solana.readFeed(jobId);
-    console.log("Latest value:", feed.value);
+    const feed = await sdk.solana.readFeed(feedId);
+    console.log("On-chain value bytes:", feed?.value);
+    console.log("Timestamp:", feed?.canonicalTimestamp);
     ```
   </Step>
 </Steps>
 
 <Warning>
-Without a `signAuthMessage`-capable wallet, gateway execution falls back to an all-zero `authSig`. That path is for development only.
+Gateway execution requires a `signAuthMessage`-capable wallet. The gateway verifies a real Ed25519 `authSig` and rejects all-zero signatures.
 </Warning>
 
 ## Next steps
 
 <CardGroup cols={2}>
-  <Card title="Create and update a feed" icon="bolt" href="/guides/create-and-update">
-    Producer flow: subscriptions, job constraints, and keeping feeds current.
+  <Card title="Maintain a feed" icon="bolt" href="/guides/create-and-update">
+    Producer flow: subscriptions, feed constraints, and keeping feeds current.
   </Card>
   <Card title="Read and verify" icon="magnifying-glass" href="/guides/read-and-verify">
     Consumer flow: read cached feeds or verify fresh signed payloads.
