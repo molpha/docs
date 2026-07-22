@@ -17,7 +17,7 @@ The Molpha signed message deliberately **omits `chainId`**. The node network sig
 
 <CardGroup cols={2}>
   <Card title="Node registry" icon="users">
-    Mirrors up to 256 oracle nodes and their secp256k1 public keys. Every add/remove creates a new immutable registry version.
+    Mirrors up to 256 nodes and their secp256k1 public keys. Every add/remove creates a new immutable registry version.
   </Card>
   <Card title="Deterministic selection" icon="dice">
     Derives the per-round signer group from a seed bound to the data payload, so callers cannot grind which nodes are eligible to sign.
@@ -68,7 +68,7 @@ Participation is encoded as a `u256` bitmap: **bit `i-1` is set iff the 1-based 
 
 ```cairo
 pub struct DataUpdate {
-    pub feed_id: u256,             // identifier of the oracle feed
+    pub feed_id: u256,             // identifier of the feed
     pub registry_version: u32,    // node-set snapshot the signature is bound to
     pub signatures_required: u32, // minimum signers (threshold) for this round
     pub value: u256,              // the canonical result being attested

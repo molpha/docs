@@ -114,7 +114,7 @@ pub fn use_molpha_feed(ctx: Context<UseMolphaFeed>, _feed_id: [u8; 32]) -> Resul
         i64::from_le_bytes(data[ts_off..ts_off + 8].try_into().unwrap());
 
     let now = Clock::get()?.unix_timestamp;
-    require!(now - canonical_ts <= 60, MyError::StaleOracle);
+    require!(now - canonical_ts <= 60, MyError::StaleData);
     let _ = value; // decode per your feed schema
     Ok(())
 }

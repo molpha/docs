@@ -44,7 +44,6 @@ Documentation/
 ├── Protocol/             # Architecture, cryptography, security
 ├── Operators/            # Run gateway infrastructure
 ├── Reference/            # Payload schema and specs
-├── Migration/            # Brebeneskul migration guide
 └── Resources/            # Glossary, FAQ, releases
 ```
 

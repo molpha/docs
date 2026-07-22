@@ -56,7 +56,7 @@ flowchart LR
     Server --> X402["x402 client<br/>escrow funding"]
     SDK --> Gateway["Molpha gateway<br/>subscription round"]
     X402 --> Gateway2["Molpha gateway<br/>x402 agent round"]
-    Gateway <--> Nodes["Oracle node quorum"]
+    Gateway <--> Nodes["Node quorum"]
     Gateway2 <--> Nodes
     SDK <--> Solana["Solana program<br/>feeds · subscriptions · agent escrows"]
     X402 <--> Solana
@@ -70,7 +70,7 @@ The MCP server is an adapter and policy boundary. The signed `DataUpdate` remain
 
 1. An MCP client invokes a typed tool over stdio.
 2. The selected wallet signs gateway authentication messages and owner transactions.
-3. Oracle nodes independently fetch the feed's committed API configuration and aggregate a signature after reaching quorum.
+3. Nodes independently fetch the feed's committed API configuration and aggregate a signature after reaching quorum.
 4. The server returns the signed artifact and chain-specific verifier arguments.
 5. A consumer verifies the payload against its registry version before using the value.
 
@@ -184,7 +184,7 @@ Subscription and extension operations are kept in a separate CLI because they de
       </Tab>
     </Tabs>
 
-    Restart the client after saving the configuration. Then ask it to call `molpha_get_capabilities`. If tool names look stale (for example `molpha_create_job`), restart or reload the MCP server so the client refreshes its tool list.
+    Restart the client after saving the configuration. Then ask it to call `molpha_get_capabilities`. If tool names look stale, restart or reload the MCP server so the client refreshes its tool list.
   </Step>
 </Steps>
 
@@ -247,7 +247,7 @@ The counters reset when the MCP server restarts. Use durable policy and wallet c
     Run the provisioning CLI with the same signer used by the MCP server, or use `payment: "x402"` / `"auto"` for a self-funded round.
   </Accordion>
 
-  <Accordion title="Oracle nodes do not reach quorum">
+  <Accordion title="Nodes do not reach quorum">
     Check that the endpoint returns deterministic, settled data. Every selected node must derive a byte-identical normalized value for the round to aggregate successfully.
   </Accordion>
 </AccordionGroup>
