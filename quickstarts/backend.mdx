@@ -6,6 +6,8 @@ icon: "server"
 
 Backends use Molpha when they need a verifiable API result that can later be checked by a smart contract, another service, or an AI agent.
 
+`sdk.gateway.requestSignedData` calls the subscription-backed gateway route (`POST /v1/round/execute`). A fresh wallet that has not subscribed (or been registered as a [Delegate](/access-models/delegates)) receives `403` instead of a payload. Subscribe once with the signing wallet before the first round — or use the [x402 agent path](/access-models/x402) / [AI agents quickstart](/quickstarts/ai-agents) for pay-per-request access.
+
 ## 1. Install the SDK
 
 ```bash
@@ -18,7 +20,12 @@ Requires Node.js `>=20.19.0`.
 
 ```ts
 import { web3 } from "@anchor-lang/core";
-import { MolphaSDK, deriveApiConfigHash, deriveFeedIdString } from "@molpha/sdk";
+import {
+  MolphaSDK,
+  PlanType,
+  deriveApiConfigHash,
+  deriveFeedIdString,
+} from "@molpha/sdk";
 import { walletFromKeypairFile } from "@molpha/sdk/utils";
 
 const wallet = walletFromKeypairFile("~/.config/solana/id.json");
@@ -28,7 +35,22 @@ const sdk = new MolphaSDK({
 });
 ```
 
-## 3. Derive a feed ID
+## 3. Subscribe
+
+Gateway rounds settle against an active USDC plan. Skip this only if the wallet already has a live subscription (or is an active delegate under one).
+
+```ts
+const plan = await sdk.solana.getPlan(PlanType.Basic);
+await sdk.solana.subscribe(PlanType.Basic, {
+  maxPriceUsdc: plan.subscriptionPrice,
+});
+```
+
+`maxPriceUsdc` is a safety bound: the transaction aborts if the on-chain price exceeds what you approved. Needs Devnet SOL for fees and Devnet USDC for the plan.
+
+If a separate hot key will sign gateway auth instead of the subscription owner, register it with [`add_delegate`](/access-models/delegates) before calling `requestSignedData`.
+
+## 4. Derive a feed ID
 
 ```ts
 const apiConfig = {
@@ -44,7 +66,7 @@ const feedId = deriveFeedIdString(
 );
 ```
 
-## 4. Request a signed payload
+## 5. Request a signed payload
 
 ```ts
 const result = await sdk.gateway.requestSignedData({
@@ -59,7 +81,7 @@ console.log(result.value, result.timestamp, result.signersBitmap);
 
 The result is ready for Solana submission, EVM verification, Starknet verification, or off-chain audit logging.
 
-## 5. Publish to Solana when you need a maintained feed
+## 6. Publish to Solana when you need a maintained feed
 
 ```ts
 const { signature } = await sdk.solana.submitDataUpdate(result);
@@ -75,7 +97,7 @@ console.log(feed?.value, feed?.canonicalTimestamp); // value is on-chain bytes
 
 The first successful submit creates the Solana `Feed` account if it does not exist.
 
-## 6. Build contract arguments
+## 7. Build contract arguments
 
 ```ts
 import { buildEvmVerifierArgs, buildStarknetVerifierArgs } from "@molpha/sdk";
@@ -101,5 +123,11 @@ const starknetArgs = buildStarknetVerifierArgs(result);
   </Card>
   <Card title="Gateway API" icon="cloud" href="/sdk/gateway-api">
     Request shape, response fields, caching, and auth notes.
+  </Card>
+  <Card title="Subscriptions" icon="credit-card" href="/access-models/subscriptions">
+    Plans, quota, and renewing access for `/v1/round/execute`.
+  </Card>
+  <Card title="x402 escrow" icon="wallet" href="/access-models/x402">
+    Pay-per-request agent path when you do not want a monthly plan.
   </Card>
 </CardGroup>

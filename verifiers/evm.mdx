@@ -273,21 +273,6 @@ Cost scales mainly with the number of keys summed for the coalition, not total r
 
 ---
 
-## Deploy & operate nodes
-
-CREATE2 deploy via `script/Deploy.s.sol` (Arachnid factory `0x4e59b44847b379578588920cA78FbF26c0B4956C`). Default salt `keccak256("MOLPHA_VERIFIER_BREBENESKUL")`, initial redundancy buffer `2`. Override salt with `DEPLOY_SALT`.
-
-```bash
-export PRIVATE_KEY=<protocol-admin>
-forge script script/Deploy.s.sol:Deploy --rpc-url <rpc> --broadcast
-```
-
-Register nodes (admin only) with `script/AddNode.s.sol` — single key, precomputed PoP, or JSON batch. Prefer passing public PoP material in production; never commit private keys. Examples live under `script/examples/` in the repo.
-
-Addresses and testnet status: [Deployments](/verifiers/deployments).
-
----
-
 ## Security surface
 
 - Treat every deployment as a **verification component**, not a full oracle product. Review registry ops, consumer freshness/replay, and feed authorization before production use.

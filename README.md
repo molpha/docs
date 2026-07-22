@@ -26,7 +26,7 @@ Navigation uses two top-level tabs:
 
 | Tab | Purpose |
 | --- | --- |
-| **Documentation** | Start from developer journeys, then dive into agents, access models, gateways, verifiers, protocol specs, and migration notes |
+| **Documentation** | Start from developer journeys, then dive into agents, access models, gateways, verifiers, and protocol specs |
 | **SDK Reference** | `@molpha/sdk` overview, gateway API, and type reference |
 
 ### Documentation sidebar

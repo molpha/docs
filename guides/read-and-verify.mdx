@@ -70,7 +70,9 @@ Always apply a **staleness guard** before using the value:
 ```typescript
 const MAX_AGE_SECONDS = 60;
 const age = Math.floor(Date.now() / 1000) - feed.canonicalTimestamp.toNumber();
-if (age > MAX_AGE_SECONDS) throw new Error(`Molpha feed is stale: ${age}s old`);
+if (age < 0 || age > MAX_AGE_SECONDS) {
+  throw new Error(`Molpha feed is stale: ${age}s old`);
+}
 ```
 
 ### Pattern B — from your Solana program
@@ -114,7 +116,8 @@ pub fn use_molpha_feed(ctx: Context<UseMolphaFeed>, _feed_id: [u8; 32]) -> Resul
         i64::from_le_bytes(data[ts_off..ts_off + 8].try_into().unwrap());
 
     let now = Clock::get()?.unix_timestamp;
-    require!(now - canonical_ts <= 60, MyError::StaleData);
+    let age = now - canonical_ts;
+    require!((0..=60).contains(&age), MyError::StaleData);
     let _ = value; // decode per your feed schema
     Ok(())
 }
