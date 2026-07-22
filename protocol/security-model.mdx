@@ -11,7 +11,7 @@ description: "What verification guarantees, what it doesn't, and the current tes
 
 ## What it does not prove
 
-- That `jobId`, `value`, or `canonicalTimestamp` correspond to genuine Solana job state — stateless verifiers store no job state. That guarantee is economic: honest selected nodes only sign messages matching the canonical Solana job they observe. Solana remains the source of truth for job validity.
+- That `feedId`, `value`, or `canonicalTimestamp` correspond to genuine Solana feed state — stateless verifiers store no feed state. That guarantee is economic: honest selected nodes only sign messages matching the canonical Solana feed they observe. Solana remains the source of truth for feed validity.
 - Freshness or non-replay. Historical registry versions remain verifiable forever, by design. Consumers must enforce `maxStaleness` against `canonicalTimestamp` and track consumed payloads where replay matters.
 
 ## Defenses in the design
@@ -20,8 +20,8 @@ description: "What verification guarantees, what it doesn't, and the current tes
 |---|---|
 | Rogue-key attack on plain-sum aggregation | Mandatory Schnorr proof-of-possession at registration, per deployment |
 | Signer-set forgery | `signersBitmap` is bound inside the signed message; coalition key recomputed from the registry snapshot |
-| Selection grinding | Selection seed derived only from `(jobId, registryVersion, canonicalTimestamp)`; verifiers re-derive and enforce subset |
-| Cross-context / cross-job reuse | Message binds `jobId`, `canonicalTimestamp`, `signersBitmap`, `value` |
+| Selection grinding | Selection seed derived only from `(feedId, registryVersion, canonicalTimestamp)`; verifiers re-derive and enforce subset |
+| Cross-context / cross-feed reuse | Message binds `feedId`, `canonicalTimestamp`, `signersBitmap`, `value` |
 | Unauthorized feed writes on Solana | `submit_data_update` re-verifies the aggregate signature on every write; monotonic `canonical_timestamp` |
 | Look-alike feed accounts | Consumers validate the `Feed` PDA with `seeds::program = MOLPHA_PROGRAM_ID` |
 

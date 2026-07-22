@@ -3,25 +3,60 @@ title: "Gateway API"
 description: "Run signing rounds and retrieve ready-to-submit payloads — via the SDK gateway client or the HTTP gateway directly."
 ---
 
-The gateway accepts an execution request for a job, dispatches a signing round to the deterministically selected node set for the current registry version, and returns a completed [`DataUpdateResult`](/sdk/reference#dataupdateresult) — a payload ready to submit to any chain's verifier. The **recommended access path is the SDK gateway client** (`sdk.gateway`), which handles auth, context caching, and struct assembly.
+The gateway accepts an execution request for a feed, dispatches a signing round to the deterministically selected node set for the current registry version, and returns a completed [`DataUpdateResult`](/sdk/reference#dataupdateresult) — a payload ready to submit to any chain's verifier. The **recommended access path is the SDK gateway client** (`sdk.gateway`), which handles auth, optional context reuse, and struct assembly.
+
+Default base URL (also exported as `DEFAULT_GATEWAY_ENDPOINT`):
+
+```text
+https://dev-gateway.molpha.io/
+```
 
 ## `requestSignedData`
 
 ```ts
-const result = await sdk.gateway.requestSignedData({ jobId, apiConfig });
+const result = await sdk.gateway.requestSignedData({
+  feedId,
+  apiConfig,
+  signaturesRequired,
+});
 ```
 
-Runs a round against the current on-chain registry version (or returns a cached result) and resolves with a [`DataUpdateResult`](/sdk/reference#dataupdateresult). `result.fresh` indicates whether the value was freshly fetched this round (`false` means the gateway served a cached result — no new round was executed).
+Runs a live round against the current on-chain registry version and resolves with a [`DataUpdateResult`](/sdk/reference#dataupdateresult). The SDK may take `feedId` for local context, but the HTTP gateway **derives** feed identity from `(consumerAuthority|payer, apiConfig, signaturesRequired)` and never trusts a client-supplied feed id. Live gateway rounds return `fresh: true`.
 
-Execution is authenticated with an `authSig` produced by the wallet's `signAuthMessage`; keypair-backed wallets sign automatically. Without a signing-capable wallet the SDK falls back to an all-zero `authSig` — accepted on testnet for development only.
+Execution is authenticated with an `authSig` produced by the wallet's `signAuthMessage` (or derived from a keypair-backed `Wallet.payer`). The gateway requires a valid 64-byte Ed25519 `authSig` — all-zero signatures are rejected.
+
+### Private APIs
+
+```ts
+const result = await sdk.gateway.requestSignedData({
+  feedId,
+  apiConfig: {
+    url: "https://api.example.com/private-price?key={{secret.apiKey}}",
+    responseParser: "$.price",
+  },
+  signaturesRequired,
+  encrypt: {
+    secrets: { apiKey: process.env.API_KEY! },
+  },
+});
+```
+
+`MolphaSDK` wires `verifyNodeKeys` to `solana.verifyNodeKeysForPrivateApi`, which checks gateway node encryption keys against on-chain Node accounts before secrets are encrypted.
 
 ## `prepareContext`
 
 ```ts
-await sdk.gateway.prepareContext(jobId);
+const context = await sdk.gateway.prepareContext(feedId);
+
+const result = await sdk.gateway.requestSignedData({
+  feedId,
+  apiConfig,
+  signaturesRequired,
+  context,
+});
 ```
 
-Caches the registry version, node set, and job config as a [`RoundContext`](/sdk/reference#roundcontext) so each subsequent `requestSignedData` call is a single gateway POST — use this for fast repeated rounds.
+Fetches registry version, redundancy buffer, and the node set, and returns a [`RoundContext`](/sdk/reference#roundcontext). Pass it back via `context` to skip those prelude fetches on subsequent rounds. There is no automatic client-side cache — reuse is explicit.
 
 ## Response shape
 
@@ -29,7 +64,7 @@ The flat `DataUpdateResult` maps 1:1 onto every chain's verifier structs via [`b
 
 ```ts
 {
-  jobId: string;
+  feedId: string;
   value: string;            // human-readable value
   valuePacked: string;      // 32-byte packed value, hex
   timestamp: number;        // canonicalTimestamp (seconds)
@@ -38,16 +73,16 @@ The flat `DataUpdateResult` maps 1:1 onto every chain's verifier structs via [`b
   signersBitmap: string;    // 32-byte big-endian bitmap, hex
   s: string;                // 32-byte Schnorr scalar, hex
   commitmentAddr: string;   // 20-byte commitment address, hex
-  fresh: boolean;           // freshly fetched this round?
+  fresh: boolean;           // true for live gateway rounds
 }
 ```
 
 ## HTTP gateway notes
 
-- **Authentication:** requests carry an `authSig` produced by the caller's wallet (`signAuthMessage`). An all-zero `authSig` is accepted on testnet for development only.
-- **Caching:** the gateway may serve a cached result; `fresh: false` indicates no new round was executed. The cached payload can also be retrieved without triggering a round (passive pull); on Solana, the equivalent is [reading the `Feed` account](/guides/read-and-verify).
-- **Registry:** the SDK caches the registry version and node set per job via `prepareContext(jobId)`.
+- **Authentication:** requests carry an `authSig` produced by the caller's wallet (`signAuthMessage` or keypair-derived). The gateway verifies it; all-zero signatures fail with `401`.
+- **Freshness:** live execute responses set `fresh: true`. To read a previously submitted Solana value without a new round, [read the `Feed` account](/guides/read-and-verify).
+- **Registry:** pass `prepareContext(feedId)` result as `context` to reuse registry version, redundancy buffer, and nodes across rounds.
 
 <Note>
-The raw HTTP request schema, routes, and error catalog are pending publication of the gateway HTTP spec. For on-chain (Solana program) errors, see the [Solana error table](/verifiers/solana#consumer-relevant-errors).
+The current HTTP route for subscription-backed rounds is `POST /v1/round/execute`. Clients send `apiConfig`, `signaturesRequired`, `registryVersion`, and `authSig`; the gateway derives `feedId` and echoes it in the response. Agent pay-per-request rounds use `POST /v1/agent/execute` with exact `amount` (not `max_price`). Full schemas: [Gateway API](/protocol/gateway).
 </Note>

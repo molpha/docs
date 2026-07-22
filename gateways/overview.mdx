@@ -1,0 +1,41 @@
+---
+title: "Gateways"
+description: "Gateways are Molpha's HTTP front door for signed data, payments, and agent access."
+icon: "cloud"
+---
+
+A gateway turns an application request into a Molpha signing round. It discovers the registry, selects nodes, dispatches the API config, collects partial signatures, aggregates them, and returns a payload ready for verification.
+
+## Responsibilities
+
+- Accept SDK, backend, and agent requests.
+- Authenticate owner-mode requests.
+- Quote and validate exact agent round pricing (`amount == price`).
+- Return x402 envelopes when pay-per-request escrow is underfunded.
+- Dispatch node rounds and collect aggregate signatures.
+- Maintain a settlement outbox for served rounds.
+- Self-host via YAML/env config (see [Gateway API](/protocol/gateway#self-hosting)).
+
+## Request paths
+
+| Path | Audience | Payment model |
+| --- | --- | --- |
+| `POST /v1/round/execute` | Feed owners and backends | Subscription / owner auth |
+| `POST /v1/agent/execute` | AI agents and one-off consumers | x402 or AgentEscrow |
+| SDK gateway client | TypeScript apps | Wraps gateway HTTP details |
+| MCP server | AI clients | Wraps SDK + guardrails |
+
+## Why gateways are first-class in Brebeneskul
+
+Brebeneskul adds economic routing around each request. The gateway is no longer only a convenience wrapper around nodes; it is also the coordination point for access models, payment checks, x402 envelopes, and settlement batching.
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Gateway API" icon="book" href="/protocol/gateway">
+    Endpoint schemas, auth, agent endpoints, and self-hosting config.
+  </Card>
+  <Card title="x402 escrow" icon="credit-card" href="/access-models/x402">
+    Pay-per-request agent access and settlement.
+  </Card>
+</CardGroup>

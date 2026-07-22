@@ -1,0 +1,108 @@
+---
+title: "Quickstart: AI Agents"
+description: "Make your first verified API request from an AI agent with MCP, then choose subscription or pay-per-request access."
+icon: "robot"
+---
+
+This quickstart is for agents that need verifiable data without embedding oracle-specific logic in every prompt or tool call.
+
+By the end, your agent can discover Molpha capabilities, request a threshold-signed payload, and decide whether to verify it, publish it to Solana, or pass chain-ready verifier arguments to an application.
+
+## Pick an access model
+
+| Model | Use when | Setup |
+| --- | --- | --- |
+| **Subscription + Delegate** | You (or your org) already pay for a plan; the agent is a hot key | Subscribe, `add_delegate`, agent calls `/v1/round/execute` (or MCP `payment: "subscription"` / `"auto"`) |
+| **x402 escrow** | The agent should pay only when it requests data | Fund the escrow ATA (MCP can top up within caps), call `/v1/agent/execute` via `payment: "x402"` / `"auto"` |
+
+x402 and AgentEscrow are one path. For the full comparison, see [Access Models](/access-models/overview).
+
+## 1. Install the MCP server
+
+Requires Node.js 24 or later.
+
+```bash
+git clone https://github.com/Molpha/mcp.git
+cd mcp
+npm ci
+cp .env.example .env
+npm run build
+```
+
+Set a signer and Solana RPC in `.env`:
+
+```dotenv
+SIGNER_BACKEND=memory
+OWNER_KEYPAIR=/absolute/path/to/owner-keypair.json
+SOLANA_RPC=https://api.devnet.solana.com
+GATEWAY_ENDPOINTS=
+```
+
+Leave `GATEWAY_ENDPOINTS` empty to use the SDK default. Override only when you need a specific gateway deployment.
+
+Run:
+
+```bash
+npm run doctor
+```
+
+The doctor prints client-specific config snippets with absolute paths.
+
+## 2. Connect your agent client
+
+Use the compiled stdio server in Cursor, Claude Desktop, Codex, or another MCP-compatible client. For Claude Desktop you can also pack an MCPB — see [MCP server](/mcp/molpha-mcp#connect-your-mcp-client).
+
+```json
+{
+  "mcpServers": {
+    "molpha": {
+      "command": "node",
+      "args": ["/absolute/path/to/mcp/dist/src/server.js"],
+      "env": {
+        "SIGNER_BACKEND": "memory",
+        "OWNER_KEYPAIR": "/absolute/path/to/owner-keypair.json",
+        "SOLANA_RPC": "https://api.devnet.solana.com"
+      }
+    }
+  }
+}
+```
+
+Restart the client, then ask it to call `molpha_get_capabilities`. If the client still lists job tools such as `molpha_create_job`, reload the MCP server.
+
+## 3. Make a read-only discovery request
+
+Use a prompt like:
+
+> Use Molpha to inspect the current oracle capabilities. Summarize the registry version, node count, supported chains, gateway endpoints, and verifier addresses. Do not make any writes.
+
+This confirms the agent can reach the server, gateway, and Solana RPC without spending USDC.
+
+## 4. Request verified data
+
+Derive or reuse a feed, then fetch with `payment: "auto"`:
+
+> Derive a Molpha feedId for `https://api.example.com/v1/finalized/price` using `$.price` and 3 required signatures. Then fetch a signed result with `payment: "auto"` and a maximum age of 60 seconds for EVM. Summarize the signed value, payment mode used, and EVM verifier call arguments. Do not submit a transaction.
+
+The trust anchor is the returned signed payload, not the prose summary. Your application should verify the payload before acting on the value.
+
+Before authorizing x402 spend:
+
+> Call `molpha_agent_status` for 3 required signatures. Tell me the escrow's USDC balance, committed amount, and quoted next price.
+
+## 5. Add payment only when needed
+
+If the agent creates or maintains feeds under a plan, use [Subscriptions](/access-models/subscriptions) and optionally add a [Delegate](/access-models/delegates) for the hot agent key. MCP `payment: "subscription"` or `"auto"` uses that plan.
+
+If the agent only needs one-off paid data, use [x402 escrow](/access-models/x402) via `payment: "x402"` or `"auto"`. The MCP server can fund the escrow from the signer's USDC balance up to `MOLPHA_X402_MAX_PRICE_USDC` / `MOLPHA_X402_MAX_SPEND_PER_DAY_USDC`.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="MCP server reference" icon="robot" href="/mcp/molpha-mcp">
+    Tool list, payment modes, guardrails, signer options, and troubleshooting.
+  </Card>
+  <Card title="Agent access models" icon="wallet" href="/access-models/overview">
+    Choose Delegate or x402 escrow.
+  </Card>
+</CardGroup>

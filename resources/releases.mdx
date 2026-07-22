@@ -3,31 +3,50 @@ title: "Releases & Roadmap"
 description: "Shipped milestones and what's next. Molpha releases are codenamed after Carpathian peaks, A → Z."
 ---
 
-Molpha releases are codenamed after Carpathian peaks, A → Z. **Hoverla** — the highest — is reserved for mainnet GA.
-
 ## Roadmap
 
 | Milestone | Status | Scope |
 |---|---|---|
-| **Albyn** (A1) | ✅ Shipped — June 2026 | Full signing/verification flow end-to-end; SDK [v0.4.0](https://www.npmjs.com/package/@molpha-oracle/sdk); verifiers on five testnets. |
-| **Brebeneskul** (A2) | 🔨 In progress | The economic layer: round settlement and subscription enforcement. |
-| **Chivchyn (A3)** | Planned | Slashing and dispute resolution: proof-based slashing with on-chain evidence. |
+| **Albyn** (A1) | ✅ Shipped — June 2026 | Full signing/verification flow end-to-end; SDK [v0.4.0](https://www.npmjs.com/package/@molpha/sdk); verifiers on five testnets. |
+| **Brebeneskul** (A2) | ✅ Current — Devnet | Agent-ready economic layer: subscriptions, Delegates, x402 escrow, gateway settlement + dispute/finalize, reward claims; Solana program `MoLFGDpFoVnQgwbkTNScKPohCxhbfd61JjFrnotuwzh`. |
+| **Chivchyn (A3)** | Planned | Broader slashing economics and operator evidence beyond the existing `dispute_round` path. |
 | **Dzembronia (A4)** | Planned | Mainnet GA: full protocol audit, node-provider onboarding, mainnet deployment across all supported chains. |
 
 ## Changelog
 
-### SDK v0.4.0 — June 2026
+### SDK v0.1.0 — current
 
-- Renamed gateway/SDK methods for clarity: `MolphaGateway.execute` → `requestSignedData`, `MolphaSDK.executeAndSubmit` → `requestAndSubmit`.
-- Renamed types: `ExecuteOptions` → `RequestSignedDataOptions`, `ExecuteContext` → `RoundContext`.
+- Package published as [`@molpha/sdk`](https://www.npmjs.com/package/@molpha/sdk) (renamed from `@molpha-oracle/sdk`).
+- Gateway/SDK methods: `MolphaGateway.requestSignedData`, `MolphaSDK.requestAndSubmit` (formerly `execute` / `executeAndSubmit`).
+- Types: `RequestSignedDataOptions`, `RoundContext` (formerly `ExecuteOptions` / `ExecuteContext`).
+- Peer dependencies: `@anchor-lang/core`, `bn.js`. Default gateway: `https://dev-gateway.molpha.io/`.
+- Requires Node.js `>=20.19.0`.
 
 ### Albyn (A1) — June 2026
 
 First public testnet release.
 
-- [`@molpha-oracle/sdk`](https://www.npmjs.com/package/@molpha-oracle/sdk) v0.3.2 published: full consumer flow (subscribe → create job → execute round → submit/verify → read feed), `buildEvmVerifierArgs`, `buildStarknetVerifierArgs`.
-- Solana program live on Devnet (`MoLFeTRpDZgckPjjbLwW1wB9n85bQiqboPnvw9RwoG8`): registry, USDC plans/subscriptions, jobs + feeds, permissionless `submit_data_update`, stateless `verify_data_update`.
+- [`@molpha/sdk`](https://www.npmjs.com/package/@molpha-oracle/sdk) v0.3.2 published: full consumer flow (subscribe → derive feed → execute round → submit update → read feed), `buildEvmVerifierArgs`, `buildStarknetVerifierArgs`.
+- Solana program live on Devnet (`MoLFeTRpDZgckPjjbLwW1wB9n85bQiqboPnvw9RwoG8`): registry, USDC plans/subscriptions, maintained `Feed` accounts, permissionless `submit_data_update`, and direct Rust verification through `molpha-verifier`.
 - EVM verifiers deployed on Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji, BSC testnet.
 - Starknet verifier deployed on Starknet Sepolia, with cross-chain parity tests accepting unmodified EVM-produced signatures.
 
 See current addresses and live/not-yet-implemented status in [Deployments & Testnet Status](/verifiers/deployments).
+
+### Brebeneskul (A2) — July 2026
+
+Current Solana program release on Devnet.
+
+- Solana program ID: `MoLFGDpFoVnQgwbkTNScKPohCxhbfd61JjFrnotuwzh`.
+- Lazy `Feed` accounts via `submit_data_update` only; variable-length `value` with `FeedValueKind`.
+- Subscription + agent settlement (`settle_round_receipt`, `settle_agent_round`), `finalize_round`, `dispute_round`, and reward claims.
+- x402 escrow PDA `["molpha_agent", authority, gateway]`; Delegates for subscription-backed agents.
+- Docs re-architecture around agents, access models, gateways, and verifiers.
+
+### Brebeneskul docs migration — July 2026
+
+- Reframed docs around developer journeys: AI agents, smart contracts, and backends.
+- Access Models: subscriptions, Delegates, and x402 escrow (HTTP + AgentEscrow as one path).
+- Promoted MCP, gateways, payload schema, and Brebeneskul migration to first-class sections.
+- Preserved low-level feed terminology as protocol internals while introducing feeds as the application-facing concept.
+- Aligned Solana pages with the Brebeneskul program ID and account model.

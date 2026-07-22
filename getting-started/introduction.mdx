@@ -1,40 +1,45 @@
 ---
 title: "Introduction"
-description: "Molpha turns any HTTP API into threshold-signed, on-chain verified data — one signature, every supported chain."
+description: "Molpha turns any HTTP API into verifiable data for smart contracts, backends, and AI agents."
 icon: "book-open"
 ---
 
-Molpha is a pull-native oracle protocol. A network of independent nodes fetches data from an off-chain API, converges on a canonical result, and signs it **once** with a single aggregate Schnorr signature. That one signed payload verifies on Solana, on every supported EVM chain, and on Starknet — without re-signing, repackaging, or per-chain feeds.
+Molpha is verifiable data infrastructure. A network of independent nodes fetches data from an off-chain API, converges on a canonical result, and signs it **once** with a single aggregate Schnorr signature. That one signed payload verifies on Solana, on every supported EVM chain, and on Starknet — without re-signing, repackaging, or per-chain feeds.
+
+The main question Molpha answers is:
+
+> How do I get verifiable data into my application?
 
 ## Why it works everywhere
 
-The signed message deliberately **omits `chainId`**. The node network signs `(jobId, value, canonicalTimestamp, …)` once, and every chain's verifier checks that exact same message. Verification is a pure cryptographic check against the registered node set — no bridge, no relayer, no per-chain attestation.
+The signed message deliberately **omits `chainId`**. The node network signs `(feedId, value, canonicalTimestamp, …)` once, and every chain's verifier checks that exact same message. Verification is a pure cryptographic check against the registered node set — no bridge, no relayer, no per-chain attestation.
 
 ## What you get
 
-- **Arbitrary data feeds** — any accessible API, not just token prices. A job commits to a URL and parsing logic; the network keeps the result verified.
-- **Cryptographically verified values** — every value is backed by a threshold aggregate Schnorr signature from the registered node set, verified on-chain at read or write time.
-- **Two consumption modes** — read the latest cached value from a Solana `Feed` account, or verify a fresh signed payload statelessly in your own transaction.
-- **USDC-denominated pricing** — subscriptions are paid in USDC on Solana. No protocol token, no token-price exposure.
+- **Arbitrary data feeds** — any accessible API, not just token prices. A feed commits to a URL and parsing logic; the network keeps the result verifiable.
+- **Cryptographically verified payloads** — every result is backed by a threshold aggregate Schnorr signature from the registered node set.
+- **Multiple consumption modes** — read a maintained Solana `Feed`, verify a fresh payload statelessly, or hand the signed artifact to another chain or service.
+- **Agent-native access** — MCP tools plus two agent options: [Delegates](/access-models/delegates) under a subscription, or [x402 escrow](/access-models/x402) pay-per-request.
+- **USDC-denominated pricing** — subscriptions and agent rounds are paid in USDC on Solana. No protocol token, no token-price exposure.
 
 ## How responsibilities split across chains
 
-**Solana is the canonical chain.** The node registry, job definitions, subscriptions, and feed values live in the Molpha Solana program.
+**Solana is the canonical settlement chain.** The node registry, subscriptions, delegates, agent escrows, gateway settlement records, and maintained feed values live in the Molpha Solana program.
 
-**EVM chains and Starknet run stateless verifiers.** Each deployment carries only a mirror of the node public-key set (versioned snapshots) plus a lightweight `verify()` entrypoint. No job state, no round state, no feed state — everything arrives in calldata and is checked cryptographically.
+**EVM chains and Starknet run stateless verifiers.** Each deployment carries only a mirror of the node public-key set (versioned snapshots) plus a lightweight `verify()` entrypoint. No feed state, no round state, no feed state — everything arrives in calldata and is checked cryptographically.
 
 A successful `verify()` on a stateless chain proves *who signed what* — that a threshold of the deterministically selected node set signed the exact payload. It does not, by itself, prove the value is fresh: historical registry versions stay verifiable forever, so **consumers always enforce their own freshness and replay policy**. See the [Security Model](/protocol/security-model) for the full trust boundary.
 
 ## Where to start
 
 <CardGroup cols={3}>
-  <Card title="Quickstart" icon="rocket" href="/getting-started/quickstart">
-    Subscribe, create a job, and submit a verified value on Solana Devnet.
+  <Card title="AI agent quickstart" icon="robot" href="/quickstarts/ai-agents">
+    Make a verified API request through MCP.
   </Card>
-  <Card title="How Molpha works" icon="diagram-project" href="/getting-started/how-it-works">
-    The end-to-end flow from API call to verified on-chain value.
+  <Card title="Smart contract quickstart" icon="file-contract" href="/quickstarts/smart-contracts">
+    Verify a payload on EVM, Solana, or Starknet.
   </Card>
-  <Card title="Create a feed" icon="bolt" href="/guides/create-and-update">
-    Producer guide: subscriptions, jobs, and on-chain updates.
+  <Card title="Backend quickstart" icon="server" href="/quickstarts/backend">
+    Request signed data with the TypeScript SDK.
   </Card>
 </CardGroup>

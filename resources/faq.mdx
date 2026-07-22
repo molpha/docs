@@ -6,7 +6,13 @@ title: "FAQ"
 No. Subscriptions are paid in USDC on Solana; there is no governance token and no token-price exposure.
 
 **Do I need a subscription to read a feed?**
-No. Reading any Solana `Feed` account is permissionless and free. A subscription is only required to create and maintain your own jobs/feeds.
+No. Reading any Solana `Feed` account is permissionless and free. A subscription is only required to maintain your own feeds.
+
+**Do AI agents need subscriptions?**
+Not always. Agents have two options: a [Delegate](/access-models/delegates) under an existing subscription, or [x402 escrow](/access-models/x402) pay-per-request with no monthly plan.
+
+**What is x402 used for?**
+x402 is the HTTP payment loop for the agent escrow path. The client funds a per-gateway `AgentEscrow` ATA; if underfunded, the gateway returns a `402 Payment Required` envelope with where and how much to pay.
 
 **Do I need to change my contract to consume Molpha on EVM?**
 One external call: `require(verifier.verify(update, sig))`, plus your own staleness check. No inheritance, no interface to implement.
@@ -21,7 +27,7 @@ The signed message contains no `chainId`, and every verifier (Solidity, Cairo, t
 No — by design. Historical registry versions remain verifiable forever. Enforce freshness against `canonicalTimestamp` and replay protection in your own contract.
 
 **Is Molpha Chainlink (AggregatorV3) compatible?**
-No, by design. Consumers call `verify()` directly with a self-contained payload.
+No, by design. Consumers call `verify()` directly with a self-contained payload. There is no aggregator product.
 
 **Is the protocol audited?**
 Not yet. The current deployments are pre-audit testnet contracts with a permissioned node set; mainnet is gated on a full audit.

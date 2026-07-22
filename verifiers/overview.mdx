@@ -3,16 +3,16 @@ title: "Verifier Overview"
 description: "One signed payload, three VM families. Identical verification pipeline everywhere."
 ---
 
-Every Molpha verifier runs the **same** [verification pipeline](/protocol/cryptography#the-verification-pipeline) over the same domain-separated hashes: derive the selection set from `(jobId, registryVersion, canonicalTimestamp)`, reconstruct the coalition key as the plain EC sum of the actual signers, and check one Schnorr signature over the canonical message. No `chainId` is in the message — that is what makes a single signature valid on every chain.
+Every Molpha verifier runs the **same** [verification pipeline](/protocol/cryptography#the-verification-pipeline) over the same domain-separated hashes: derive the selection set from `(feedId, registryVersion, canonicalTimestamp)`, reconstruct the coalition key as the plain EC sum of the actual signers, and check one Schnorr signature over the canonical message. No `chainId` is in the message — that is what makes a single signature valid on every chain.
 
 ## The three implementations
 
 | | Solana | EVM | Starknet |
 |---|---|---|---|
-| Role | Canonical chain + verifier | Stateless verifier | Stateless verifier |
-| Entrypoint | `verify_data_update` (reverts; 72-byte return data) / `submit_data_update` (writes the `Feed`) | `verify(dataUpdate, schnorrData) → bool` (`view`) | `verify(data_update, schnorr_data) → bool` |
-| Node-key storage | `RegistryIndex` PDAs | SSTORE2 snapshot per version | per-`(version, index)` coordinate maps |
-| Schnorr final check | native verification over the args | `ecrecover` trick (recovers `s·G − e·P`) | native secp256k1 syscalls, computes `s·G + (Q−e)·P` |
+| Role | Canonical settlement + Rust verifier crate | Stateless verifier | Stateless verifier |
+| Entrypoint | `submit_data_update` writes the `Feed`; `molpha-verifier` verifies directly in Rust | `verify(dataUpdate, schnorrData) → bool` (`view`) | `verify(data_update, schnorr_data) → bool` |
+| Node-key storage | `Node` PDAs (`molpha_node`) | SSTORE2 snapshot per version | per-`(version, index)` coordinate maps |
+| Schnorr final check | `molpha-verifier` uses the EVM-compatible Schnorr→ECDSA recovery path | `ecrecover` trick (recovers `s·G − e·P`) | native secp256k1 syscalls, computes `s·G + (Q−e)·P` |
 
 The Starknet contract is a bit-for-bit port of the EVM pipeline, proven by parity tests that verify **unmodified EVM-produced signatures** on Cairo.
 

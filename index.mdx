@@ -1,48 +1,48 @@
 ---
 title: "Molpha Oracle Protocol"
-description: "Turning any API into verifiable on-chain data"
+description: "Verifiable data infrastructure for smart contracts, backends, and AI agents"
 ---
 
-Molpha is a pull-native oracle protocol. Independent nodes fetch data from any HTTP API, converge on a canonical value, and sign it once with a threshold aggregate signature — verifiable on Solana, EVM, and Starknet without per-chain feeds or bridges.
+Molpha turns any HTTP API into a threshold-signed payload that applications can verify on Solana, EVM, Starknet, or off-chain. Brebeneskul expands the protocol from subscription-first oracle feeds into verifiable data infrastructure for smart contracts, backends, and AI agents.
 
 ## Choose your path
 
 <CardGroup cols={3}>
-  <Card icon="book-open" href="/getting-started/introduction" title="Learn the protocol">
-    What Molpha is, how one signature works across chains, and where Solana fits in the stack.
+  <Card icon="robot" href="/quickstarts/ai-agents" title="AI Agents">
+    Make a verified API request through MCP, then choose Delegate or x402 escrow.
   </Card>
-  <Card icon="rocket" href="/getting-started/quickstart" title="Quickstart">
-    Get a verified feed on Solana Devnet — with the TypeScript SDK or the MCP server in Cursor, Claude, or Codex.
+  <Card icon="file-contract" href="/quickstarts/smart-contracts" title="Smart Contracts">
+    Verify the same signed payload on EVM, Solana, or Starknet and enforce freshness in your app.
   </Card>
-  <Card icon="diagram-project" href="/getting-started/how-it-works" title="How it works">
-    Follow a value from an HTTP response through a signing round to on-chain verification.
+  <Card icon="server" href="/quickstarts/backend" title="Backends">
+    Request signed data with the TypeScript SDK and publish or hand off verifier-ready payloads.
   </Card>
 </CardGroup>
 
-## Build and integrate
+## Core surfaces
 
 <CardGroup cols={3}>
   <Card icon="code" href="/sdk/overview" title="TypeScript SDK">
-  Install `@molpha-oracle/sdk` for backends, automation, and custom applications.
+    Install `@molpha/sdk` for backends, automation, and custom applications.
   </Card>
   <Card icon="robot" href="/mcp/molpha-mcp" title="MCP server">
     Connect AI agents to typed Molpha tools for discovery, dry-runs, and Solana writes.
   </Card>
-  <Card icon="bolt" href="/guides/create-and-update" title="Guides">
-    Task-oriented walkthroughs for creating feeds, reading values, and verifying on EVM or Starknet.
+  <Card icon="cloud" href="/gateways/overview" title="Gateways">
+    Request signed data, route agent payments, and operate gateway infrastructure.
   </Card>
 </CardGroup>
 
-## Go deeper
+## Understand the model
 
 <CardGroup cols={3}>
-  <Card icon="shield-check" href="/verifiers/overview" title="Verifiers">
-    On-chain verification on Solana, EVM, and Starknet — one payload, three VM families.
+  <Card icon="wallet" href="/access-models/overview" title="Access Models">
+    Compare subscriptions, Delegate, and x402 escrow.
+  </Card>
+  <Card icon="rss" href="/concepts/feeds" title="Feeds and payloads">
+    Learn how API configs become signed payloads and optional Solana feed accounts.
   </Card>
   <Card icon="sitemap" href="/protocol/architecture" title="Protocol">
-    Architecture, gateway protocol, cryptography, and the security model.
-  </Card>
-  <Card icon="circle-question" href="/resources/faq" title="Resources">
-    Glossary, FAQ, and release notes.
+    Architecture, cryptography, registry versions, and the security model.
   </Card>
 </CardGroup>

@@ -1,0 +1,30 @@
+---
+title: "Brebeneskul Migration"
+description: "What changed in the Brebeneskul docs and API model."
+icon: "mountain"
+---
+
+Brebeneskul moves Molpha docs and integrations to the feed-first model.
+
+## Main changes
+
+| Old model | Brebeneskul model |
+| --- | --- |
+| Job-oriented docs | Feed-oriented docs |
+| Public `jobId` language | Public `feedId` language |
+| Create-job flow | Deterministic `feedId`; `Feed` account created lazily by `submit_data_update` |
+| Solana simulation verification | `submit_data_update` + read, or direct Rust verification with `molpha-verifier` |
+| Subscription-only entry path | Subscriptions, Delegates, and x402 escrow |
+| Program ID `MoLFe…RwoG8` (Albyn) | Program ID `MoLFGDpFoVnQgwbkTNScKPohCxhbfd61JjFrnotuwzh` |
+
+## What to update
+
+1. Replace `jobId` with `feedId`.
+2. Derive `feedId` from owner, API config hash, and `signaturesRequired`.
+3. Remove create-feed/create-job transactions from examples.
+4. For Solana consumption, either submit and read the `Feed`, or verify directly with `molpha-verifier`.
+5. For EVM/Starknet, keep using verifier call arguments from the SDK.
+
+The deployed feed-ID domain separator still contains `MOLPHA_JOB_V1` for compatibility. That string is an implementation detail, not the public docs concept.
+
+Current Solana Devnet program: `MoLFGDpFoVnQgwbkTNScKPohCxhbfd61JjFrnotuwzh`. See [Solana Program](/verifiers/solana) for accounts and instructions.

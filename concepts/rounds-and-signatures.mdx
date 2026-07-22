@@ -3,7 +3,7 @@ title: "Rounds and Signatures"
 description: "One round produces one self-contained, threshold-signed payload that verifies on every chain."
 ---
 
-A **round** is one coordination event: a deterministically selected subset of registered nodes independently fetches the job's API, converges on a canonical result, and signs it once — producing a single aggregate Schnorr signature. The output is a self-contained payload (`DataUpdate` + `AggregatedSig`) that verifies unmodified on Solana, EVM, and Starknet.
+A **round** is one coordination event: a deterministically selected subset of registered nodes independently fetches the feed's API, converges on a canonical result, and signs it once — producing a single aggregate Schnorr signature. The output is a self-contained payload (`DataUpdate` + `AggregatedSig`) that verifies unmodified on Solana, EVM, and Starknet.
 
 ## The round
 
@@ -13,13 +13,20 @@ Rounds are **pull-native** — they run on demand:
 
 ```ts
 // Run a gateway round and submit the signed result to Solana, in one call
-const { result, signature } = await sdk.requestAndSubmit(jobId, { apiConfig });
+const { result, signature } = await sdk.requestAndSubmit(feedId, {
+  apiConfig,
+  signaturesRequired,
+});
 ```
 
 Under the hood this is a gateway execution followed by a Solana submission:
 
 ```ts
-const result = await sdk.gateway.requestSignedData({ jobId, apiConfig });
+const result = await sdk.gateway.requestSignedData({
+  feedId,
+  apiConfig,
+  signaturesRequired,
+});
 const { signature } = await sdk.solana.submitDataUpdate(result);
 ```
 
@@ -31,10 +38,10 @@ A `DataUpdate` is the signed result of one round. It is **self-contained**: ever
 
 | Field | Meaning |
 |---|---|
-| `jobId` | `keccak256("MOLPHA_JOB_V1" \|\| owner \|\| apiConfigHash)` — commits the payload to a specific job config |
+| `feedId` | Deterministic identifier derived from owner, API config hash, and quorum |
 | `registryVersion` | The immutable node-set snapshot the signature was produced against |
 | `signaturesRequired` | The quorum threshold for this update |
-| `value` | The signed result — a 32-byte big-endian word, [encoding job-defined](/concepts/jobs#values-and-decoding) |
+| `value` | The signed result — a 32-byte big-endian word, [encoding feed-defined](/concepts/feeds#values-and-decoding) |
 | `canonicalTimestamp` | Off-chain unix time (seconds) the value was produced; also a node-selection input |
 
 The per-chain struct definitions (`DataUpdate` / `SchnorrSignature` in Solidity, Cairo, and Rust) live in each verifier reference: [Solana](/verifiers/solana), [EVM](/verifiers/evm#data-structures), [Starknet](/verifiers/starknet#data-structures).
@@ -46,7 +53,7 @@ The aggregate signature covers:
 ```
 message = keccak256(abi.encodePacked(
     MESSAGE_PREFIX,        // keccak256("MOLPHA_MESSAGE_V1")
-    jobId,
+    feedId,
     registryVersion,
     signaturesRequired,
     signersBitmap,
@@ -74,4 +81,4 @@ The bitmap is part of the signed message above — the signer set is committed b
 
 ## Consumption
 
-On Solana, the payload can be written to the job's `Feed` account via the permissionless `submit_data_update` instruction. A new value is only accepted if its `canonical_timestamp` is **strictly greater** than the stored one (monotonic freshness). On EVM and Starknet, your contract calls `verify()` and applies its own freshness policy. See the [guides](/guides/create-and-update) for each path.
+On Solana, the payload can be written to the feed's `Feed` account via the permissionless `submit_data_update` instruction. A new value is only accepted if its `canonical_timestamp` is **strictly greater** than the stored one (monotonic freshness). On EVM and Starknet, your contract calls `verify()` and applies its own freshness policy. See the [guides](/guides/create-and-update) for each path.

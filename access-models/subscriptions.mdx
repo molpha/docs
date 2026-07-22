@@ -1,0 +1,59 @@
+---
+title: "Subscriptions"
+description: "Monthly USDC access for creating and maintaining Molpha feeds."
+icon: "calendar-check"
+---
+
+Subscriptions are the producer access model. A subscription lets a wallet request and settle rounds for feeds derived from that wallet or its delegates.
+
+## Use subscriptions when
+
+- You publish a feed that other users or contracts consume.
+- You need ongoing quota instead of one-off requests.
+- You want stable feed ownership and delegate management.
+- You operate a backend or keeper that updates Solana feed accounts.
+
+## Flow
+
+1. Fund the owner wallet with Solana Devnet SOL and Devnet USDC.
+2. Fetch the current plan price.
+3. Subscribe with an explicit `maxPriceUsdc` safety bound.
+4. Derive the `feedId`.
+5. Request signed updates through the gateway.
+6. Submit verified updates to Solana when you maintain a public feed account.
+
+```ts
+import { PlanType } from "@molpha/sdk";
+
+const plan = await sdk.solana.getPlan(PlanType.Basic);
+
+await sdk.solana.subscribe(PlanType.Basic, {
+  maxPriceUsdc: plan.subscriptionPrice,
+});
+```
+
+## What a plan controls
+
+| Field | Meaning |
+| --- | --- |
+| `subscription_price` | Monthly USDC price in atomic units |
+| `max_signers` | Highest quorum the plan can request (copied onto the subscription) |
+| `max_delegates` | Max delegated authorities the owner may add |
+| `private_api_enabled` | Whether encrypted/private API configs are available |
+
+The `Subscription` account also tracks `used_rounds` / `max_rounds` (initialized to unlimited) and mirrors `max_signers` / `max_delegates` from the plan at subscribe time.
+
+## Consumer note
+
+Consumers do not need a subscription to read an existing feed or verify a signed payload. They only need the payload, the verifier address/program, and their own freshness policy.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Delegates" icon="user-check" href="/access-models/delegates">
+    Authorize a hot agent key under this subscription.
+  </Card>
+  <Card title="Maintain a feed" icon="bolt" href="/guides/create-and-update">
+    Producer walkthrough for subscriptions and feed updates.
+  </Card>
+</CardGroup>

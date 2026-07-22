@@ -6,12 +6,12 @@ description: "On-chain Schnorr verification for Molpha on Starknet: a Cairo cont
 The **Starknet Verifier** is a Cairo contract that performs on-chain verification of Molpha payloads on Starknet. Like every Molpha verifier, it holds a mirror of the registered node set and checks a single aggregated Schnorr signature over a self-contained data payload — so the same value the node network signs once is trustlessly verifiable on Starknet.
 
 <Note>
-**Solana is the canonical chain.** Jobs, staking, deposits, rewards, and the authoritative node registry live on Solana. The Starknet deployment carries only a *mirror* of the node public-key set (versioned snapshots) plus this lightweight verifier. It stores **no** job, round, or feed state — everything it needs arrives in calldata and is checked cryptographically.
+**Solana is the canonical chain.** Feeds, staking, deposits, rewards, and the authoritative node registry live on Solana. The Starknet deployment carries only a *mirror* of the node public-key set (versioned snapshots) plus this lightweight verifier. It stores **no** feed, round, or feed state — everything it needs arrives in calldata and is checked cryptographically.
 </Note>
 
 ## One signature, every chain
 
-The Molpha signed message deliberately **omits `chainId`**. The node network signs `(job_id, value, timestamp, …)` once, and the Starknet verifier checks that exact same message — no re-signing, no chain-specific payload. This is what lets a single signed result be consumed on Starknet alongside any other supported chain.
+The Molpha signed message deliberately **omits `chainId`**. The node network signs `(feed_id, value, timestamp, …)` once, and the Starknet verifier checks that exact same message — no re-signing, no chain-specific payload. This is what lets a single signed result be consumed on Starknet alongside any other supported chain.
 
 ## What the Verifier does
 
@@ -68,7 +68,7 @@ Participation is encoded as a `u256` bitmap: **bit `i-1` is set iff the 1-based 
 
 ```cairo
 pub struct DataUpdate {
-    pub job_id: u256,             // identifier of the oracle job
+    pub feed_id: u256,             // identifier of the oracle feed
     pub registry_version: u32,    // node-set snapshot the signature is bound to
     pub signatures_required: u32, // minimum signers (threshold) for this round
     pub value: u256,              // the canonical result being attested
@@ -114,6 +114,6 @@ The checks run in order:
 
 ## Consumer integration
 
-See [Verify on Starknet](/guides/verify-on-starknet) for the consumer-contract walkthrough and integration checklist. Because the Verifier is stateless with respect to feeds, **your contract owns any freshness, replay, or value-bounds policy** — `verify` only attests that the node network signed `(job_id, value, timestamp, …)` against a given registry version.
+See [Verify on Starknet](/guides/verify-on-starknet) for the consumer-contract walkthrough and integration checklist. Because the Verifier is stateless with respect to feeds, **your contract owns any freshness, replay, or value-bounds policy** — `verify` only attests that the node network signed `(feed_id, value, timestamp, …)` against a given registry version.
 
-A successful `verify` proves at least `signatures_required` keys from the mirrored `registry_version` signed the exact `DataUpdate`, and that every signer is inside the deterministic selection set. It does **not** prove freshness, prevent replay, or independently prove that the payload corresponds to genuine Solana job state. Those guarantees — and the protocol's admin powers — are covered in the [Security Model](/protocol/security-model).
+A successful `verify` proves at least `signatures_required` keys from the mirrored `registry_version` signed the exact `DataUpdate`, and that every signer is inside the deterministic selection set. It does **not** prove freshness, prevent replay, or independently prove that the payload corresponds to genuine Solana feed state. Those guarantees — and the protocol's admin powers — are covered in the [Security Model](/protocol/security-model).

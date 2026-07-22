@@ -1,0 +1,65 @@
+---
+title: "Quickstart: Smart Contracts"
+description: "Verify a Molpha payload in EVM, Solana, or Starknet applications."
+icon: "file-contract"
+---
+
+Smart contracts consume Molpha by verifying a self-contained signed payload. You do not need to run a node, trust a relayer, or maintain a per-chain feed contract.
+
+## What your contract receives
+
+Every chain receives the same logical artifact:
+
+- `DataUpdate` — `feedId`, `registryVersion`, `signaturesRequired`, `value`, `canonicalTimestamp`
+- `SchnorrSignature` — aggregate scalar, commitment, and `signersBitmap`
+
+The payload proves that the selected Molpha node quorum signed exactly that data. Your contract still enforces freshness, replay policy, and feed identity.
+
+## EVM
+
+```solidity
+require(verifier.verify(update, sig), "Molpha: invalid signature");
+require(block.timestamp - update.canonicalTimestamp <= 60, "Molpha: stale");
+require(update.feedId == EXPECTED_FEED_ID, "Molpha: wrong feed");
+
+_useValue(update.value);
+```
+
+Full guide: [Verify on EVM](/guides/verify-on-evm).
+
+## Solana
+
+Use one of two patterns:
+
+1. Read the latest maintained `Feed` account for low-latency consumption.
+2. Verify a fresh payload directly with the `molpha-verifier` Rust crate when the decision needs point-in-time proof.
+
+Full guide: [Read and Verify on Solana](/guides/read-and-verify).
+
+## Starknet
+
+Use the Cairo verifier with the same signed payload. The SDK can build Starknet-ready arguments from a gateway result.
+
+Full guide: [Verify on Starknet](/guides/verify-on-starknet).
+
+## Consumer checklist
+
+- Verify the payload before using the value.
+- Check `feedId` against the feed you intended to consume.
+- Enforce `canonicalTimestamp` freshness.
+- Track consumed payloads if replay matters.
+- Decode `value` according to the feed schema.
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="EVM verifier" icon="ethereum" href="/verifiers/evm">
+    Solidity structs, registry layout, and gas notes.
+  </Card>
+  <Card title="Solana verifier" icon="sun" href="/verifiers/solana">
+    Feed PDA layout, `submit_data_update`, and direct Rust verification.
+  </Card>
+  <Card title="Payload schema" icon="brackets-curly" href="/reference/payload-schema">
+    Field-level reference for the signed artifact.
+  </Card>
+</CardGroup>

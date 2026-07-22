@@ -1,0 +1,82 @@
+---
+title: "Payload Schema"
+description: "Field-level reference for Molpha's portable signed data artifact."
+icon: "brackets-curly"
+---
+
+Every Molpha round returns a signed artifact that maps onto the same logical schema across Solana, EVM, Starknet, SDK, and MCP surfaces.
+
+## Logical schema
+
+### `DataUpdate`
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `feedId` | `bytes32` | Feed identity derived from owner, API config hash, and quorum |
+| `registryVersion` | `u32` | Immutable node-set snapshot used for verification |
+| `signaturesRequired` | `u32` | Minimum signer threshold for this round |
+| `value` | `bytes32` / `u256` | Canonical result, encoded as a 32-byte big-endian word |
+| `canonicalTimestamp` | `u64` | Unix seconds for the round; signed and used for freshness checks |
+
+### `SchnorrSignature`
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `signature` / `s` | `bytes32` | Aggregate Schnorr scalar |
+| `commitment` / `commitmentAddr` | `address` / felt-compatible address | Ethereum-style address of the nonce commitment |
+| `signersBitmap` | `u256` / `bytes32` | Bitmap of participating 1-based registry indices |
+
+## SDK response shape
+
+```ts
+interface DataUpdateResult {
+  feedId: string;
+  value: string;
+  valuePacked: string;
+  timestamp: number;
+  registryVersion: number;
+  signaturesRequired: number;
+  signersBitmap: string;
+  s: string;
+  commitmentAddr: string;
+  fresh: boolean;
+}
+```
+
+## Signed message
+
+```text
+message = keccak256(abi.encodePacked(
+  MESSAGE_PREFIX,
+  feedId,
+  registryVersion,
+  signaturesRequired,
+  signersBitmap,
+  value,
+  canonicalTimestamp
+))
+```
+
+`signersBitmap` is inside the message, so the caller cannot choose a signer set after signature aggregation. `chainId` is not inside the message, so the same payload can verify on all supported chains.
+
+## Consumer rules
+
+- Treat `value` as bytes until your application decodes it.
+- Enforce `feedId` equality against the feed you intended.
+- Enforce freshness against `canonicalTimestamp`.
+- Add replay protection when a valid old payload could be submitted twice.
+- Require the verifier result before executing application logic.
+
+## Chain-specific references
+
+<CardGroup cols={3}>
+  <Card title="Solana" icon="sun" href="/verifiers/solana">
+    Program verification and feed account details.
+  </Card>
+  <Card title="EVM" icon="ethereum" href="/verifiers/evm">
+    Solidity structs and verifier call pattern.
+  </Card>
+  <Card title="Starknet" icon="hexagon-nodes" href="/verifiers/starknet">
+    Cairo structs and syscall-based secp256k1 verification.
+  </Card>
+</CardGroup>

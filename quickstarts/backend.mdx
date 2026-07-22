@@ -1,0 +1,105 @@
+---
+title: "Quickstart: Backend"
+description: "Use the TypeScript SDK to request signed data, verify it, and optionally publish it to Solana."
+icon: "server"
+---
+
+Backends use Molpha when they need a verifiable API result that can later be checked by a smart contract, another service, or an AI agent.
+
+## 1. Install the SDK
+
+```bash
+npm install @molpha/sdk @anchor-lang/core bn.js
+```
+
+Requires Node.js `>=20.19.0`.
+
+## 2. Initialize
+
+```ts
+import { web3 } from "@anchor-lang/core";
+import { MolphaSDK, deriveApiConfigHash, deriveFeedIdString } from "@molpha/sdk";
+import { walletFromKeypairFile } from "@molpha/sdk/utils";
+
+const wallet = walletFromKeypairFile("~/.config/solana/id.json");
+const sdk = new MolphaSDK({
+  connection: new web3.Connection("https://api.devnet.solana.com", "confirmed"),
+  wallet,
+});
+```
+
+## 3. Derive a feed ID
+
+```ts
+const apiConfig = {
+  url: "https://api.example.com/price",
+  responseParser: "$.price",
+};
+
+const signaturesRequired = 3;
+const feedId = deriveFeedIdString(
+  wallet.publicKey.toBytes(),
+  deriveApiConfigHash(apiConfig),
+  signaturesRequired,
+);
+```
+
+## 4. Request a signed payload
+
+```ts
+const result = await sdk.gateway.requestSignedData({
+  feedId,
+  apiConfig,
+  signaturesRequired,
+  maxAge: 60,
+});
+
+console.log(result.value, result.timestamp, result.signersBitmap);
+```
+
+The result is ready for Solana submission, EVM verification, Starknet verification, or off-chain audit logging.
+
+## 5. Publish to Solana when you need a maintained feed
+
+```ts
+const { signature } = await sdk.solana.submitDataUpdate(result);
+console.log("submitted", signature);
+```
+
+Reading the maintained feed later:
+
+```ts
+const feed = await sdk.solana.readFeed(feedId);
+console.log(feed?.value, feed?.canonicalTimestamp); // value is on-chain bytes
+```
+
+The first successful submit creates the Solana `Feed` account if it does not exist.
+
+## 6. Build contract arguments
+
+```ts
+import { buildEvmVerifierArgs, buildStarknetVerifierArgs } from "@molpha/sdk";
+
+const evmArgs = buildEvmVerifierArgs(result);
+const starknetArgs = buildStarknetVerifierArgs(result);
+```
+
+## Backend patterns
+
+| Pattern | Use it when |
+| --- | --- |
+| Request only | You need a portable proof artifact for another service or chain |
+| Request + submit | You maintain a Solana feed that many consumers read |
+| Request + verify | You gate an off-chain decision on a threshold-signed API result |
+| Request + handoff | You pass verified data to an agent or contract executor |
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="SDK overview" icon="code" href="/sdk/overview">
+    Installation, wallet interface, and facade methods.
+  </Card>
+  <Card title="Gateway API" icon="cloud" href="/sdk/gateway-api">
+    Request shape, response fields, caching, and auth notes.
+  </Card>
+</CardGroup>

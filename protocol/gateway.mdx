@@ -1,325 +1,213 @@
 ---
 title: "Gateway API"
-description: "HTTP entry point to the Molpha oracle protocol — request signed, aggregated data on demand."
+description: "HTTP entry point for subscription-backed rounds, x402 agent rounds, and settlement."
 ---
 
-The **Molpha Gateway** is the HTTP front door to the Molpha oracle protocol. You send it a job
-execution request; it fans the request out to the oracle node set over a libp2p P2P network,
-waits for the nodes to fetch the data and produce an aggregated Schnorr signature, and returns
-the signed result to you.
-
-A single `execute` call gives you everything needed to settle a value on-chain: the value, the
-aggregated signature `(s, rx, ryParity)`, the set of signers, and the on-chain commitment address.
-
-<Note>
-The gateway is **stateless** with respect to results — every `execute` call triggers a fresh
-oracle round. There is no caching layer at the gateway; freshness is guaranteed by a per-request
-`timestamp`.
-</Note>
+The Molpha Gateway turns an API request into a signed `DataUpdateResult`. It derives the feed identity, checks authorization or payment, dispatches a node round, validates the aggregate signature, and returns a payload that can be submitted to Solana or verified on EVM/Starknet.
 
 ## Base URL
 
-```
-https://gateway.molpha.io
-```
+The SDK default (`DEFAULT_GATEWAY_ENDPOINT`) is:
 
-All endpoints are unversioned at the host level; resource versioning is in the path (`/v1/...`).
-
-## Quick start
-
-<Steps>
-  <Step title="Discover the node set">
-    Call [`GET /v1/nodes`](#get-v1-nodes) to learn which oracle nodes exist and their signing keys.
-  </Step>
-  <Step title="Read the job config">
-    Call [`GET /v1/jobs/{jobId}/config`](#get-v1-jobs-jobid-config) to learn how many signatures the
-    job requires.
-  </Step>
-  <Step title="Sign and execute">
-    Build an `authSig` over the job ID and a current timestamp, then call
-    [`POST /v1/jobs/{jobId}/execute`](#post-v1-jobs-jobid-execute) to get the signed result.
-  </Step>
-</Steps>
-
-The TypeScript SDK does all three steps for you — see [Using the SDK](#using-the-sdk).
-
-## Authentication
-
-The execute endpoint authenticates the caller against the **on-chain job owner**. You prove
-ownership by signing a message with the job owner's ed25519 key (a standard Solana keypair).
-
-The message to sign is:
-
-```
-keccak256( jobId_bytes || uint64_be(timestamp) )
+```text
+https://dev-gateway.molpha.io/
 ```
 
-- `jobId_bytes` — the 32 raw bytes of the job ID.
-- `timestamp` — the same `uint64` Unix-seconds value you put in the request body, big-endian.
+Brebeneskul agent routes may also be exposed on deployment-specific gateways such as:
 
-The resulting 64-byte ed25519 signature is sent (hex-encoded) as `authSig`. The gateway recovers
-the job owner from Solana and rejects the request if the signature does not match.
-
-<Warning>
-Because the signed message includes the `timestamp`, the signature is single-use for a given
-timestamp. The SDK recomputes `authSig` on every retry attempt with a fresh timestamp.
-</Warning>
-
-<CodeGroup>
-```ts authMessage.ts
-import { keccak_256 } from "@noble/hashes/sha3.js";
-
-function authMessage(jobId: string, timestamp: bigint): Uint8Array {
-  const jobIdBytes = Buffer.from(jobId.replace(/^0x/, ""), "hex");
-  const tsBuf = new Uint8Array(8);
-  new DataView(tsBuf.buffer).setBigUint64(0, timestamp, false); // big-endian
-
-  const preimage = new Uint8Array(jobIdBytes.length + 8);
-  preimage.set(jobIdBytes, 0);
-  preimage.set(tsBuf, jobIdBytes.length);
-
-  return keccak_256(preimage);
-}
+```text
+https://brebeneskul.gateway.molpha.io
 ```
-</CodeGroup>
 
----
+## Endpoint overview
 
-## Endpoints
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Liveness probe |
+| `GET` | `/v1/nodes` | Node metadata and encryption keys |
+| `POST` | `/v1/round/execute` | Subscription-backed signing round |
+| `POST` | `/v1/agent/execute` | x402 agent pay-per-request round |
+| `GET` | `/v1/agent/{payer}/status` | Advisory x402 escrow status |
 
-### GET /health
+Agent endpoints require `agent.enabled: true` and a configured gateway keypair (`settlement.gateway_keypair_path`).
 
-Liveness probe. Returns `200 OK` when the service is up. No request parameters.
+## Feed ID derivation
 
-<CodeGroup>
-```bash cURL
-curl https://gateway.molpha.io/health
+Clients do not send an on-chain create transaction. The gateway and SDK derive the feed identity from the caller, config hash, and quorum:
+
+```text
+feed_id = keccak256("MOLPHA_JOB_V1" || owner || api_config_hash || [signatures_required])
 ```
-</CodeGroup>
 
-| Status | Meaning          |
-| ------ | ---------------- |
-| `200`  | Service healthy  |
-| `503`  | Service degraded |
+- **Subscription path:** `owner` is `consumerAuthority`.
+- **Agent path:** `owner` is the payer.
+- `signatures_required` is appended as a single byte.
 
----
+The gateway derives `feedId` and echoes it in successful responses. The Solana `Feed` account is created lazily on first successful `submit_data_update`. Settlement creates a round receipt; it does not write the feed.
 
-### GET /v1/nodes
+## Subscription-backed rounds
 
-Returns the configured oracle node set, including each node's libp2p address and the compressed
-secp256k1 signing key used for end-to-end encryption.
+### `POST /v1/round/execute`
 
-<CodeGroup>
-```bash cURL
-curl https://gateway.molpha.io/v1/nodes
-```
-</CodeGroup>
+Runs a signing round for a subscription owner or active delegate.
 
-**Response**
-
-<ResponseField name="status" type="string">
-Always `"ok"`.
-</ResponseField>
-
-<ResponseField name="data.nodes" type="Node[]">
-  <Expandable title="Node">
-    <ResponseField name="index" type="number">
-    Stable index of the node within the registry. Used by the selection algorithm and the
-    encryption envelope map.
-    </ResponseField>
-    <ResponseField name="peerId" type="string">
-    libp2p peer ID, derived from the signing key.
-    </ResponseField>
-    <ResponseField name="address" type="string">
-    libp2p multiaddr, e.g. `/ip4/127.0.0.1/tcp/9000`.
-    </ResponseField>
-    <ResponseField name="signingKey" type="string">
-    Compressed secp256k1 public key (66-char hex). Used for ECDH key agreement when encrypting an
-    API config for a node.
-    </ResponseField>
-  </Expandable>
-</ResponseField>
-
-```json Response
+```json
 {
-  "status": "ok",
-  "data": {
-    "nodes": [
-      {
-        "index": 0,
-        "peerId": "12D3KooW...",
-        "address": "/ip4/127.0.0.1/tcp/9000",
-        "signingKey": "02a1b2c3..."
-      }
-    ]
-  }
+  "subscriptionOwner": "<base58 pubkey>",
+  "consumerAuthority": "<base58 pubkey>",
+  "signaturesRequired": 3,
+  "timestamp": 1718650000,
+  "registryVersion": 1,
+  "authSig": "<64-byte ed25519 signature, hex or base58>",
+  "apiConfig": {
+    "url": "https://api.example.com/price",
+    "method": "GET",
+    "headers": {},
+    "responseParser": "$.data.price",
+    "valueTransform": "multiply:1e6"
+  },
+  "encKeyBundle": null
 }
 ```
 
----
+`consumerAuthority` signs:
 
-### GET /v1/jobs/{jobId}/config
-
-Fetches the on-chain selection parameters for a job.
-
-<ParamField path="jobId" type="string" required>
-32-byte job ID, hex-encoded (64 hex chars). A leading `0x` is accepted and stripped.
-</ParamField>
-
-<CodeGroup>
-```bash cURL
-curl https://gateway.molpha.io/v1/jobs/$JOB_ID/config
+```text
+hash = sha256("MOLPHA_REQAUTH_V1" || feed_id || uint64_le(timestamp))
 ```
-</CodeGroup>
 
-**Response**
+`timestamp` must be within ~300s of the gateway clock. `registryVersion` must equal the current on-chain registry version. The signature is single-use per `(feed_id, timestamp)` — retries need a fresh timestamp and signature. An all-zero `authSig` is rejected.
 
-<ResponseField name="status" type="string">Always `"ok"`.</ResponseField>
-<ResponseField name="data.signaturesRequired" type="number">
-Number of node signatures required to form a valid aggregated signature for this job.
-</ResponseField>
-<ResponseField name="data.redundancyBuffer" type="number">
-Extra nodes selected beyond `signaturesRequired` to tolerate failures. Group size =
-`signaturesRequired + redundancyBuffer`.
-</ResponseField>
-<ResponseField name="data.decimals" type="number">
-Fixed-point decimals the job's value is scaled to.
-</ResponseField>
+| Status | Typical cause |
+| --- | --- |
+| `400` | Validation failure, stale `registryVersion`, malformed body |
+| `401` | Missing or invalid `authSig` |
+| `403` | Inactive/exhausted subscription, unauthorized delegate, quota committed |
+| `409` | Duplicate round identity |
+| `503` | Node timeout or upstream failure |
 
-```json Response
+## x402 agent rounds
+
+### `POST /v1/agent/execute`
+
+Runs a self-funded pay-per-request round. Agent-specific fields use **snake_case**; `apiConfig` matches the subscription execute shape.
+
+The payer funds a per-gateway escrow ATA, locks an exact USDC `amount` equal to the computed round price, signs `AgentRequestAuth`, and receives the signed result. Settlement via `settle_agent_round` is asynchronous.
+
+```json
 {
-  "status": "ok",
-  "data": {
-    "signaturesRequired": 3,
-    "redundancyBuffer": 1,
-    "decimals": 8
-  }
+  "payer": "<base58 pubkey>",
+  "canonical_timestamp": 1718650000,
+  "signatures_required": 3,
+  "amount": 1030,
+  "registry_version": 1,
+  "agent_request_auth_sig": "<64-byte ed25519 signature>",
+  "apiConfig": {
+    "url": "https://api.example.com/price",
+    "method": "GET",
+    "headers": {},
+    "responseParser": "$.data.price",
+    "valueTransform": "multiply:1e6"
+  },
+  "encKeyBundle": null
 }
 ```
 
-**Errors**
+Round price (USDC atomic units):
 
-| Status | `error`                            | Cause                                     |
-| ------ | ---------------------------------- | ----------------------------------------- |
-| `400`  | `invalid job ID`                   | `jobId` is not 32-byte hex                |
-| `404`  | `job not found`                    | No job account exists on-chain            |
-| `500`  | `failed to fetch redundancy buffer`| Upstream Solana read failed               |
-
----
-
-### POST /v1/jobs/{jobId}/execute
-
-Triggers an oracle round and returns the signed, aggregated result. This is the core endpoint.
-
-<ParamField path="jobId" type="string" required>
-32-byte job ID, hex-encoded (64 hex chars). A leading `0x` is accepted and stripped.
-</ParamField>
-
-#### Request body
-
-<ParamField body="timestamp" type="number" required>
-Unix time in **seconds**. Must satisfy `|now - timestamp| ≤ maxAge`. Also part of the signed
-`authSig` message. With `maxAge: 0` only the exact current second is accepted.
-</ParamField>
-
-<ParamField body="registryVersion" type="number">
-Node-registry version the round should run against. Folded into the deterministic round ID.
-</ParamField>
-
-<ParamField body="maxAge" type="number">
-Allowed clock skew, in seconds, between `timestamp` and the gateway's clock.
-</ParamField>
-
-<ParamField body="authSig" type="string" required>
-ed25519 signature (64 bytes, hex; `0x` accepted) over
-`keccak256(jobId_bytes || uint64_be(timestamp))`. Verified against the on-chain job owner. See
-[Authentication](#authentication).
-</ParamField>
-
-<ParamField body="apiConfig" type="object" required>
-  Describes the data source the nodes should fetch.
-  <Expandable title="apiConfig">
-    <ParamField body="url" type="string" required>
-    Source URL. Must be a valid URL with an `http` or `https` scheme.
-    </ParamField>
-    <ParamField body="method" type="string">
-    HTTP method: one of `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`
-    (case-insensitive). Defaults to `GET` in the SDK.
-    </ParamField>
-    <ParamField body="headers" type="object">
-    Request headers as a string→string map. Header names must be non-empty.
-    </ParamField>
-    <ParamField body="responseParser" type="string">
-    Expression used to extract the value from the response (e.g. a JSON path).
-    </ParamField>
-    <ParamField body="valueTransform" type="string">
-    Transform applied to the parsed value before signing (e.g. `multiply:1e6`).
-    </ParamField>
-  </Expandable>
-</ParamField>
-
-<ParamField body="encKeyBundle" type="object | null">
-  Optional end-to-end encryption envelope. Omit or send `null` for plaintext API configs. When
-  present, the gateway forwards each node only its own envelope entry. See
-  [End-to-end encryption](#end-to-end-encryption).
-  <Expandable title="encKeyBundle">
-    <ParamField body="ephemeralPub" type="string">Ephemeral public key, hex (`0x` accepted).</ParamField>
-    <ParamField body="nonceSym" type="string">Symmetric nonce, exactly 12 bytes, hex.</ParamField>
-    <ParamField body="ciphertext" type="string">Encrypted API config, hex.</ParamField>
-    <ParamField body="envelopes" type="object">
-    Map of `nodeIndex` (decimal string) → wrapped symmetric key, hex. Keys must parse as `uint32`;
-    values must be non-empty hex.
-    </ParamField>
-  </Expandable>
-</ParamField>
-
-<CodeGroup>
-```bash cURL
-curl -X POST https://gateway.molpha.io/v1/jobs/$JOB_ID/execute \
-  -H "Content-Type: application/json" \
-  -d '{
-    "timestamp": 1718650000,
-    "registryVersion": 1,
-    "maxAge": 60,
-    "authSig": "0x<128-hex-char-signature>",
-    "apiConfig": {
-      "url": "https://api.example.com/price",
-      "method": "GET",
-      "headers": {},
-      "responseParser": "$.data.price",
-      "valueTransform": "multiply:1e6"
-    },
-    "encKeyBundle": null
-  }'
+```text
+price = protocol_config.agent_round_base
+      + signatures_required × protocol_config.agent_round_per_sig
 ```
-</CodeGroup>
 
-#### Response
+`amount` must equal that price exactly. `agent_request_auth_sig` may be omitted on the unfunded first request of the 402 discovery flow.
 
-<ResponseField name="status" type="string">Always `"completed"` on success.</ResponseField>
-<ResponseField name="data" type="object">
-  <Expandable title="data">
-    <ResponseField name="jobId" type="string">The job ID, hex.</ResponseField>
-    <ResponseField name="value" type="string">Human-readable aggregated value.</ResponseField>
-    <ResponseField name="valuePacked" type="string">Packed/encoded value used for on-chain settlement.</ResponseField>
-    <ResponseField name="timestamp" type="number">Round timestamp (echoes the request).</ResponseField>
-    <ResponseField name="registryVersion" type="number">Registry version the round ran against.</ResponseField>
-    <ResponseField name="signaturesRequired" type="number">Number of signatures required for this job.</ResponseField>
-    <ResponseField name="configHash" type="string">Hash of the API config used by the nodes.</ResponseField>
-    <ResponseField name="signersBitmap" type="string">Bitmap of node indices that contributed to the aggregated signature.</ResponseField>
-    <ResponseField name="s" type="string">Schnorr signature scalar `s`.</ResponseField>
-    <ResponseField name="rx" type="string">Schnorr nonce point x-coordinate `Rx`.</ResponseField>
-    <ResponseField name="ryParity" type="number">Parity bit of the nonce point y-coordinate.</ResponseField>
-    <ResponseField name="commitmentAddr" type="string">On-chain commitment address for this round.</ResponseField>
-    <ResponseField name="fresh" type="boolean">Always `true` — the result was produced by this round.</ResponseField>
-  </Expandable>
-</ResponseField>
+`AgentRequestAuth` hash:
 
-```json Response
+```text
+body = borsh(agent_escrow_pda, gateway_pda, feed_id, canonical_timestamp_le, amount_le)
+hash = sha256("MOLPHA_AGENT_REQAUTH_V1" || body)
+sig  = ed25519_sign(payer, hash)
+```
+
+If the escrow ATA is underfunded (available balance = ATA − committed unsettled amounts), the gateway returns a standard x402 envelope:
+
+```json
+{
+  "x402Version": 1,
+  "error": "payment required: escrow ATA underfunded",
+  "accepts": [{
+    "scheme": "exact",
+    "network": "solana-devnet",
+    "maxAmountRequired": "1030",
+    "payTo": "<escrow ATA>",
+    "asset": "<USDC mint>",
+    "resource": "/v1/agent/execute",
+    "description": "Molpha agent round for feed 0x…",
+    "maxTimeoutSeconds": 60,
+    "extra": {
+      "agent": "<escrow PDA>",
+      "gateway": "<gateway PDA>",
+      "feedId": "0x…",
+      "canonicalTimestamp": 1718650000,
+      "amount": "1030",
+      "payer": "<payer>",
+      "currentAtaBalance": "0",
+      "committedAmount": "0",
+      "note": "fund at least the shortfall, sign AgentRequestAuth over (agent, gateway, feedId, canonicalTimestamp, amount), then retry with the same canonical_timestamp"
+    }
+  }]
+}
+```
+
+402 flow:
+
+1. Call execute (signature optional) → receive 402.
+2. Create/fund `payTo` with at least `maxAmountRequired` USDC.
+3. Sign `AgentRequestAuth` over the `extra` fields.
+4. Retry with the **same** `canonical_timestamp` and the signature.
+
+| Status | Typical cause |
+| --- | --- |
+| `400` | Validation failure, `amount` ≠ price, stale `registry_version` / timestamp |
+| `401` | Missing or invalid `agent_request_auth_sig` on a funded request |
+| `402` | Escrow ATA underfunded or missing |
+| `403` | Escrow paused or payer/authority mismatch |
+| `409` | Duplicate `canonical_timestamp` for this feed identity |
+| `503` | Node round timeout or upstream failure |
+
+### `GET /v1/agent/{payer}/status`
+
+Advisory read of escrow state. Optional query `signatures_required` (default `1`) controls the price quote. The escrow is per `(payer, gateway)` — the gateway derives and returns both addresses.
+
+```json
+{
+  "payer": "<base58 pubkey>",
+  "gateway": "<gateway PDA>",
+  "escrow": "<escrow PDA>",
+  "exists": true,
+  "authority": "<base58 pubkey>",
+  "status": "Active",
+  "ataAddress": "<ATA>",
+  "ataExists": true,
+  "ataBalance": "2060",
+  "committedAmount": "1030",
+  "quotedNextPrice": "1030",
+  "unsettledRounds": 1
+}
+```
+
+USDC amounts are decimal strings of atomic units. `exists: false` is normal before the first successful settlement.
+
+## Data response
+
+Successful round responses return the same signed payload shape. Live rounds always set `fresh: true`.
+
+```json
 {
   "status": "completed",
   "data": {
-    "jobId": "1a2b3c...",
+    "feedId": "1a2b3c...",
     "value": "65432.10",
     "valuePacked": "0x...",
     "timestamp": 1718650000,
@@ -336,118 +224,64 @@ curl -X POST https://gateway.molpha.io/v1/jobs/$JOB_ID/execute \
 }
 ```
 
-#### Errors
+## Serve lifecycle
 
-All errors use the envelope `{ "error": "<message>" }`.
+1. Validate JSON, pubkeys, timestamps, and API config.
+2. Derive `api_config_hash` and `feed_id`.
+3. Verify request auth or x402 funding + `AgentRequestAuth`.
+4. Read advisory on-chain state.
+5. Reserve the round in the settlement outbox.
+6. Dispatch to nodes.
+7. Validate returned aggregate signature identity.
+8. Complete the outbox record (`pending`).
+9. Return the signed payload.
 
-| Status | `error` (examples)                                  | Cause                                                       |
-| ------ | -------------------------------------------------- | ---------------------------------------------------------- |
-| `400`  | `jobId is required`                                | Empty path parameter                                       |
-| `400`  | `malformed request body`                           | Body is not valid JSON                                     |
-| `400`  | `timestamp: is required`                           | `timestamp` missing or zero                                |
-| `400`  | `timestamp: must be within the allowed time range` | Clock skew exceeds `maxAge`                                |
-| `400`  | `jobId: must be 32-byte hex`                       | Bad job ID format                                          |
-| `400`  | `authSig: must be 64 bytes, got N`                 | Signature wrong length                                     |
-| `400`  | `authSig: signature does not match job owner`      | Signature does not verify against the on-chain owner       |
-| `400`  | `apiConfig.url: scheme must be http or https`      | Invalid source URL                                         |
-| `400`  | `apiConfig.method: must be a valid HTTP method`    | Unsupported method                                         |
-| `503`  | `upstream timeout`                                 | No aggregated signature within `node.agg_wait_seconds`     |
-| `503`  | _(node-supplied message)_                          | A node reported an error for the round                     |
-| `500`  | `internal server error`                            | Unexpected dispatch/build failure                          |
+Settlement worker drains `pending` rows into `settle_round_receipt` or `settle_agent_round` when `settlement.enabled` is true.
 
-<Tip>
-A `503` typically means too few nodes responded in time. Retry with a fresh `timestamp` — this
-also re-rolls the deterministic node selection, which often resolves transient failures. The SDK
-does this automatically (`maxRetries`, default 15).
-</Tip>
+## Round-record PDAs
 
----
+Replay protection is the unique round-record PDA `init`:
 
-## End-to-end encryption
+| Path | Seeds |
+| --- | --- |
+| Subscription / delegate | `["molpha_round", consumer_authority, api_config_hash, signatures_required, timestamp_le]` |
+| x402 agent | `["molpha_agent_round", authority, gateway, api_config_hash, signatures_required, canonical_timestamp_le]` |
 
-When an API config contains secrets (API keys, tokens), you can encrypt it so that **only the
-nodes selected for the round** can read it — the gateway never sees the plaintext.
+## Self-hosting
 
-The flow:
+The gateway is a Go service configured by YAML and environment variables. There is no separate operator “run-gateway” guide — use this section and the gateway repository config.
 
-1. Locally compute which nodes will be selected for `(jobId, registryVersion, timestamp)` using the
-   deterministic selection algorithm.
-2. Resolve secret placeholders (e.g. `{{secret.appid}}`) in the API config.
-3. Encrypt the resolved config with a fresh symmetric key, then wrap that symmetric key for each
-   selected node via ECDH against its `signingKey`.
-4. Send the result as `encKeyBundle`, keyed by each node's `index`.
+```yaml
+server:
+  port: 8080
 
-The SDK's `encrypt` option handles all of this. The `envelopes` map must contain exactly the
-selected node indices, since selection is timestamp-dependent.
+solana:
+  rpc_url: https://api.devnet.solana.com
+  program_id: MoLFGDpFoVnQgwbkTNScKPohCxhbfd61JjFrnotuwzh
+  usdc_mint: 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
 
-<Warning>
-Node selection depends on `timestamp`. If you retry with a new timestamp, you must recompute the
-selection and re-encrypt for the new node set. The SDK does this on each attempt.
-</Warning>
+agent:
+  enabled: true
+  protocol_config_ttl_seconds: 30
+  x402_network: solana-devnet
+  timestamp_skew_seconds: 300
 
----
-
-## Using the SDK
-
-The TypeScript SDK wraps node discovery, job config, deterministic selection, encryption, auth
-signing, and retries.
-
-<CodeGroup>
-```ts execute.ts
-import { MolphaGateway, createSignerFromKeypairFile } from "@molpha/gateway-sdk";
-
-const gw = new MolphaGateway("https://gateway.molpha.io");
-
-// Sign as the job owner using a Solana keypair JSON file
-const signer = createSignerFromKeypairFile("~/.config/solana/id.json");
-
-const result = await gw.execute({
-  jobId: "1a2b3c...",          // 64-char hex, no 0x
-  registryVersion: 1,
-  apiConfig: {
-    url: "https://api.example.com/price",
-    method: "GET",
-    responseParser: "$.data.price",
-    valueTransform: "multiply:1e6",
-  },
-  signer,
-  maxAge: 60,
-  maxRetries: 15,
-});
-
-console.log(result.value, result.s, result.rx, result.commitmentAddr);
+settlement:
+  enabled: true
+  db_path: data/settlement-outbox.db
+  gateway_keypair_path: /secure/path/gateway.json
+  settle_interval_seconds: 10
+  settle_batch_limit: 25
+  settle_max_attempts: 10
 ```
 
-```ts encrypted.ts
-// Encrypt secrets end-to-end for the selected nodes
-const result = await gw.execute({
-  jobId,
-  registryVersion: 1,
-  apiConfig: {
-    url: "https://api.example.com/price?appid={{secret.appid}}",
-    responseParser: "$.data.price",
-  },
-  signer,
-  encrypt: { secrets: { appid: process.env.API_KEY! } },
-});
-```
-</CodeGroup>
+When `agent.enabled` is true, `settlement.gateway_keypair_path` is required because `AgentRequestAuth` binds the gateway PDA. If settlement is disabled, served rounds can remain pending indefinitely.
 
-The SDK retries with a fresh timestamp on each failed attempt, recomputing both `authSig` and the
-node selection.
+Settlement uses the on-chain `protocol_config.usdc_mint`; `solana.usdc_mint` only overrides serve-time ATA derivation and must match on-chain.
 
----
+## Operational notes
 
-## Protocol internals (reference)
-
-You don't need these to use the API, but they explain how a round works under the hood.
-
-- **Transport.** The gateway sends each selected node a binary `RoundRequest` over a libp2p stream
-  on protocol `/molpha/1.0.0`.
-- **Aggregation.** Nodes publish the aggregated signature as JSON on the GossipSub topic
-  `molpha/agg-sig/v1`. The gateway matches the message by the deterministic round ID.
-- **Deterministic round ID.** Computed as
-  `keccak256( keccak256("MOLPHA_PULL_ROUND_V1") || jobId || uint32_be(registryVersion) || uint64_be(timestamp) )`,
-  so the same inputs always identify the same round.
-- **Round ID ≠ randomness.** Because the round ID is deterministic in `timestamp`, freshness and
-  selection both rotate purely by changing the timestamp.
+- Use durable storage for the settlement outbox.
+- Monitor pending outbox records and round timeout rates.
+- Keep Solana RPC latency low for escrow and subscription reads.
+- Verify returned payloads before application use.

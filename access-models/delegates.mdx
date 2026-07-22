@@ -1,0 +1,83 @@
+---
+title: "Delegates"
+description: "Let a hot agent key request subscription-backed rounds under owner-defined caps."
+icon: "user-check"
+---
+
+A **Delegate** is the subscription-backed option for AI agents. The subscription owner keeps the cold key and prepaid plan; the agent holds a hot key that can authorize gateway rounds within on-chain limits.
+
+This is the alternative to [x402 escrow](/access-models/x402). Use a delegate when someone already pays for a Molpha subscription and wants the agent to spend that quota — not when the agent should pay USDC per request.
+
+## Use a delegate when
+
+- A team already has an active subscription.
+- The agent should not hold the owner's USDC or subscription key.
+- You want hard caps on how many rounds and what quorum the agent can request.
+- Rounds should settle through `settle_round_receipt` against the subscription.
+
+## On-chain account
+
+```rust
+#[account]
+pub struct Delegate {
+    pub owner: Pubkey,              // subscription owner
+    pub delegate: Pubkey,           // hot agent authority
+    pub status: AgentStatus,        // Active | Paused
+    pub max_data_requests: u64,
+    pub data_requests_used: u64,
+    pub max_signers: u8,            // quorum ceiling for this agent
+    pub bump: u8,
+    // epoch_cap / epoch_spent / epoch_id exist but are not enforced yet
+}
+```
+
+Seeds:
+
+```text
+["molpha_delegate", owner, delegate]
+```
+
+Create with `add_delegate`, remove with `remove_delegate`, pause with `set_delegate_paused`.
+
+## Flow
+
+1. Owner opens or extends a [subscription](/access-models/subscriptions).
+2. Owner calls `add_delegate` with the agent pubkey, `max_data_requests`, and `max_signers`.
+3. Agent (as `consumerAuthority`) signs `RequestAuth` and calls `POST /v1/round/execute`.
+4. Gateway serves the signed payload.
+5. Gateway later settles with `settle_round_receipt`, which consumes one delegate request when the consumer is not the owner.
+
+```text
+hash = sha256("MOLPHA_REQAUTH_V1" || borsh(RequestAuth{ feed_id, timestamp }))
+```
+
+`feed_id` is derived from the **delegate authority** (consumer), API config hash, and quorum — same formula as other Molpha feeds.
+
+## Controls
+
+| Control | Behavior |
+| --- | --- |
+| `max_data_requests` | Hard cap on settled rounds for this delegate |
+| `max_signers` | Quorum ceiling; must be ≤ `subscription.max_signers` |
+| `status` | Must be `Active`; owner can pause |
+| Subscription expiry | Settlements fail if the plan is inactive |
+
+## vs x402 escrow
+
+| | Delegate | x402 escrow |
+| --- | --- | --- |
+| Billing | Prepaid subscription | Per-round USDC from escrow ATA |
+| Hot key | `Delegate.delegate` | `AgentEscrow.authority` |
+| Gateway | `/v1/round/execute` | `/v1/agent/execute` |
+| Settlement ix | `settle_round_receipt` | `settle_agent_round` |
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Subscriptions" icon="calendar-check" href="/access-models/subscriptions">
+    Open the plan that backs the delegate.
+  </Card>
+  <Card title="x402 escrow" icon="credit-card" href="/access-models/x402">
+    Pay-per-request path when there is no subscription.
+  </Card>
+</CardGroup>

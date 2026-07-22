@@ -1,35 +1,45 @@
 ---
 title: "SDK Overview"
-description: "Install @molpha-oracle/sdk and drive the full flow: plans, subscriptions, jobs, submission, feeds, and stateless verification."
+description: "Install @molpha/sdk and request verifiable data from backends, agents, and custom applications."
 ---
 
-[`@molpha-oracle/sdk`](https://www.npmjs.com/package/@molpha-oracle/sdk) (v0.4.0) is the recommended way to integrate Molpha. `MolphaSDK` wires the gateway client and the Solana client together behind a single wallet, and the package also ships framework-agnostic EVM/Starknet [argument builders](/sdk/reference).
+[`@molpha/sdk`](https://www.npmjs.com/package/@molpha/sdk) is the recommended way to integrate Molpha from TypeScript. `MolphaSDK` wires the gateway client and the Solana client together behind a single wallet, and the package also ships framework-agnostic EVM/Starknet [argument builders](/sdk/reference).
 
-For AI agent workflows in Cursor, Claude Desktop, or Codex, use the [Molpha MCP server](/mcp/molpha-mcp) — it wraps this SDK behind typed MCP tools. See the [Quickstart](/getting-started/quickstart) to compare both paths.
+For AI agent workflows in Cursor, Claude Desktop, or Codex, use the [Molpha MCP server](/mcp/molpha-mcp) — it wraps this SDK behind typed MCP tools. For the fastest path by audience, see the [Backend quickstart](/quickstarts/backend) or [AI agent quickstart](/quickstarts/ai-agents).
+
+## What you can build
+
+| Workflow | SDK path |
+| --- | --- |
+| Request one signed payload | `sdk.gateway.requestSignedData(...)` |
+| Maintain a Solana feed | Derive `feedId`, then `sdk.requestAndSubmit(...)` |
+| Read a maintained feed | `sdk.solana.readFeed(feedId)` |
+| Verify directly in Rust | Use `molpha-verifier` with registry/node data |
+| Call EVM/Starknet verifiers | `buildEvmVerifierArgs(result)` / `buildStarknetVerifierArgs(result)` |
 
 ## Installation
 
-Install the package along with the optional Solana peer dependencies (required for `MolphaSDK` / `MolphaSolanaClient`):
+Install the package along with the Solana peer dependencies (required for `MolphaSDK` / `MolphaSolanaClient`):
 
 <Tabs>
 <Tab title="pnpm">
 
 ```bash
-pnpm add @molpha-oracle/sdk @solana/web3.js @coral-xyz/anchor @solana/spl-token bn.js
+pnpm add @molpha/sdk @anchor-lang/core bn.js
 ```
 
 </Tab>
 <Tab title="npm">
 
 ```bash
-npm install @molpha-oracle/sdk @solana/web3.js @coral-xyz/anchor @solana/spl-token bn.js
+npm install @molpha/sdk @anchor-lang/core bn.js
 ```
 
 </Tab>
 <Tab title="yarn">
 
 ```bash
-yarn add @molpha-oracle/sdk @solana/web3.js @coral-xyz/anchor @solana/spl-token bn.js
+yarn add @molpha/sdk @anchor-lang/core bn.js
 ```
 
 </Tab>
@@ -37,26 +47,40 @@ yarn add @molpha-oracle/sdk @solana/web3.js @coral-xyz/anchor @solana/spl-token 
 
 - **ESM, browser-first**, with `"sideEffects": false`
 - **Tree-shakeable Solana path** — gateway-only or read-only apps that skip the Solana imports can tree-shake the Anchor-heavy path entirely
-- **Node.js `>=18`**
-- Node-only helpers (e.g. `walletFromKeypairFile`) live under the `@molpha-oracle/sdk/utils` subpath so they never enter browser bundles
+- **Node.js `>=20.19.0`**
+- Node-only helpers (e.g. `walletFromKeypairFile`) live under the `@molpha/sdk/utils` subpath so they never enter browser bundles
+
+`@anchor-lang/core` provides the Anchor `Wallet` / `Connection` types the Solana client expects. `bn.js` is used by the Solana / Anchor path. The SDK pulls in `@solana/kit` and `@noble/*` as direct dependencies — you do not need `@solana/web3.js`, `@coral-xyz/anchor`, or `@solana/spl-token` for the consumer flow.
 
 ## Initialize
 
 ```ts
-import { Connection } from "@solana/web3.js";
-import { MolphaSDK } from "@molpha-oracle/sdk";
-import { walletFromKeypairFile } from "@molpha-oracle/sdk/utils";
+import { web3 } from "@anchor-lang/core";
+import { MolphaSDK } from "@molpha/sdk";
+import { walletFromKeypairFile } from "@molpha/sdk/utils";
 
 const sdk = new MolphaSDK({
-  connection: new Connection("https://api.devnet.solana.com", "confirmed"),
+  connection: new web3.Connection("https://api.devnet.solana.com", "confirmed"),
   wallet: walletFromKeypairFile("~/.config/solana/id.json"),
+});
+```
+
+By default the SDK talks to `https://dev-gateway.molpha.io/`. Override with `endpoints` (string or array for failover):
+
+```ts
+import { DEFAULT_GATEWAY_ENDPOINT } from "@molpha/sdk";
+
+const sdk = new MolphaSDK({
+  connection,
+  wallet,
+  endpoints: [DEFAULT_GATEWAY_ENDPOINT, "https://backup.example.com"],
 });
 ```
 
 `walletFromKeypairFile` is Node.js-only. In the browser, pass a [`MolphaWallet`](/sdk/reference#molphawallet) backed by a wallet adapter:
 
 ```ts
-import type { MolphaWallet } from "@molpha-oracle/sdk";
+import type { MolphaWallet } from "@molpha/sdk";
 
 const wallet: MolphaWallet = {
   publicKey: adapter.publicKey,
@@ -67,65 +91,84 @@ const wallet: MolphaWallet = {
 ```
 
 <Warning>
-Without a `signAuthMessage`-capable wallet (or a keypair-backed wallet), gateway execution falls back to an all-zero `authSig`. That path is for development only — production jobs should authenticate gateway execution.
+Gateway execution requires a real Ed25519 `authSig`. Keypair-backed wallets (`walletFromKeypairFile`) derive auth from `Wallet.payer` automatically. Browser adapters should provide `signAuthMessage`. The gateway rejects all-zero signatures.
 </Warning>
 
 ## Facade surface
 
 | Member | Purpose |
 |---|---|
-| `sdk.requestAndSubmit(jobId, { apiConfig })` | Run a gateway round against the current registry version and submit the signed result to Solana in one call. Returns `{ result, signature }`. |
+| `sdk.requestAndSubmit(feedId, { apiConfig, signaturesRequired })` | Run a gateway round against the current registry version and submit the signed result to Solana in one call. Returns `{ result, signature }`. |
 | `sdk.gateway` | The [gateway client](/sdk/gateway-api): `requestSignedData`, `prepareContext`, … |
-| `sdk.solana` | The Solana client (below): `getPlan`, `subscribe`, `createJob`, `submitDataUpdate`, `readFeed`, `verifyDataUpdate`, … |
+| `sdk.solana` | The Solana client (below): `getPlan`, `subscribe`, `extendSubscription`, `submitDataUpdate`, `readFeed`, `getRegistrySelectionConfig`, … |
 
 `requestAndSubmit` is equivalent to:
 
 ```ts
-const result = await sdk.gateway.requestSignedData({ jobId, apiConfig });
+const result = await sdk.gateway.requestSignedData({
+  feedId,
+  apiConfig,
+  signaturesRequired,
+});
 const { signature } = await sdk.solana.submitDataUpdate(result);
 ```
 
 ## Solana client (`sdk.solana`)
 
-All methods target the Molpha program (`MoLFeTRpDZgckPjjbLwW1wB9n85bQiqboPnvw9RwoG8` on devnet); PDAs are derived internally from the documented seeds.
+All methods target the Molpha program (`MoLFGDpFoVnQgwbkTNScKPohCxhbfd61JjFrnotuwzh` on devnet); PDAs are derived internally from the documented seeds.
 
 ### Plans and subscriptions
 
 ```ts
-import { PlanType } from "@molpha-oracle/sdk";
+import { PlanType } from "@molpha/sdk";
 
 const plan = await sdk.solana.getPlan(PlanType.Basic);
 
 const { pricePaid } = await sdk.solana.subscribe(PlanType.Basic, {
   maxPriceUsdc: plan.subscriptionPrice,
 });
-```
 
-`maxPriceUsdc` is a safety bound: the transaction aborts if the on-chain price is higher than what the user approved. `PlanType` ordinals are stable: `Basic = 0`, `Standard = 1`, `Professional = 2`, `Enterprise = 3`.
-
-### Jobs
-
-```ts
-import { deriveApiConfigHash } from "@molpha-oracle/sdk";
-
-const { jobId } = await sdk.solana.createJob({
-  apiConfigHash: deriveApiConfigHash(apiConfig),
-  signaturesRequired: 3,
-  decimals: 8,
+// Renew for another period (same maxPriceUsdc safety bound)
+await sdk.solana.extendSubscription({
+  maxPriceUsdc: plan.subscriptionPrice,
 });
 ```
+
+`maxPriceUsdc` is a safety bound: the transaction aborts if the on-chain price is higher than what the user approved. The SDK currently exports `PlanType.Basic` (`0`). On-chain plan ordinals remain `Basic = 0`, `Standard = 1`, `Professional = 2`, `Enterprise = 3`.
+
+### Derive a feed ID
+
+```ts
+import { deriveApiConfigHash, deriveFeedIdString } from "@molpha/sdk";
+
+const signaturesRequired = 3;
+const apiConfigHash = deriveApiConfigHash(apiConfig);
+const feedId = deriveFeedIdString(
+  wallet.publicKey.toBytes(),
+  apiConfigHash,
+  signaturesRequired,
+);
+```
+
+There is no separate create instruction. The first successful `submitDataUpdate` creates the Solana `Feed` account if it does not exist. Settlement writes round receipts only.
 
 ### Request
 
 ```ts
-// Optional, but recommended before repeated rounds for the same job
-await sdk.gateway.prepareContext(jobId);
+// Optional: fetch registry + nodes once, then reuse across rounds
+const context = await sdk.gateway.prepareContext(feedId);
 
-// Run a gateway signing round (or receive a cached result)
-const result = await sdk.gateway.requestSignedData({ jobId, apiConfig });
+const result = await sdk.gateway.requestSignedData({
+  feedId,
+  apiConfig,
+  signaturesRequired,
+  context,
+});
 ```
 
-`result.fresh` indicates whether the value was fetched this round (`false` means cached). Gateway execution is authenticated via `signAuthMessage`; wallets without signing support fall back to an all-zero `authSig` for development only.
+Live gateway rounds return `fresh: true`. Gateway execution is authenticated via `signAuthMessage` (or a keypair-derived signer); the HTTP gateway rejects all-zero `authSig` values.
+
+For private APIs, pass `encrypt: { secrets: { ... } }` — `MolphaSDK` authenticates gateway node keys against on-chain Node accounts before encrypting. See the [SDK gateway API](/sdk/gateway-api).
 
 ### Submission and reads
 
@@ -133,18 +176,20 @@ const result = await sdk.gateway.requestSignedData({ jobId, apiConfig });
 // Verify + write the signed result to the Feed account
 const { signature } = await sdk.solana.submitDataUpdate(result);
 
-// Read the finalized on-chain feed value
-const feed = await sdk.solana.readFeed(jobId);
-console.log(feed.value, feed.canonicalTimestamp);
+// Read the finalized on-chain feed account (bytes + metadata)
+const feed = await sdk.solana.readFeed(feedId);
+console.log(feed?.value, feed?.canonicalTimestamp);
 ```
+
+`feed.value` is the on-chain byte array (`number[]`), not the human-readable `DataUpdateResult.value` string. Decode it per your feed schema (see [Read and verify](/guides/read-and-verify)).
 
 `submit_data_update` is permissionless on-chain — the program re-verifies the aggregate signature on every write and only accepts a value whose `canonical_timestamp` is strictly greater than the stored one.
 
-### Stateless verification
+### Direct verification
 
-```ts
-// Verify a signed result via simulation without writing state
-const { value, canonicalTimestamp } = await sdk.solana.verifyDataUpdate(result);
-```
+For Solana, use one of two paths:
 
-Simulates the `verify_data_update` instruction and decodes the 72-byte return data — see [Read and Verify on Solana](/guides/read-and-verify#verify-on-solana) for the underlying mechanics.
+- submit through `submitDataUpdate`, then read the `Feed` account;
+- verify directly in Rust with `molpha-verifier`.
+
+For EVM and Starknet, build verifier arguments with the helpers in [SDK Reference](/sdk/reference).

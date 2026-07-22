@@ -1,8 +1,8 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "Molpha Oracle Protocol",
-  "description": "Pull-native threshold oracle. Any HTTP API → one threshold-signed result → verified on Solana, EVM, and Starknet.",
+  "name": "Molpha",
+  "description": "Verifiable data infrastructure for smart contracts, backends, and AI agents. Any HTTP API → one threshold-signed payload → verified on Solana, EVM, and Starknet.",
   "logo": {
     "dark": "/logo/logo.svg",
     "light": "/logo/logo.svg",
@@ -26,7 +26,7 @@
       },
       {
         "label": "npm",
-        "href": "https://www.npmjs.com/package/@molpha-oracle/sdk"
+        "href": "https://www.npmjs.com/package/@molpha/sdk"
       }
     ]
   },
@@ -40,16 +40,41 @@
             "pages": [
               "index",
               "getting-started/introduction",
-              "getting-started/quickstart",
               "getting-started/how-it-works"
+            ]
+          },
+          {
+            "group": "Quickstarts",
+            "pages": [
+              "quickstarts/ai-agents",
+              "quickstarts/smart-contracts",
+              "quickstarts/backend",
+              "getting-started/quickstart"
+            ]
+          },
+          {
+            "group": "AI Agents",
+            "pages": [
+              "agents/overview",
+              "mcp/molpha-mcp"
+            ]
+          },
+          {
+            "group": "Access Models",
+            "pages": [
+              "access-models/overview",
+              "access-models/subscriptions",
+              "access-models/delegates",
+              "access-models/x402"
             ]
           },
           {
             "group": "Core Concepts",
             "pages": [
-              "concepts/jobs",
+              "concepts/feeds",
               "concepts/rounds-and-signatures",
-              "concepts/registry-versions"
+              "concepts/registry-versions",
+              "concepts/payloads"
             ]
           },
           {
@@ -62,9 +87,10 @@
             ]
           },
           {
-            "group": "MCP Server",
+            "group": "Gateways",
             "pages": [
-              "mcp/molpha-mcp"
+              "gateways/overview",
+              "protocol/gateway"
             ]
           },
           {
@@ -81,9 +107,14 @@
             "group": "Protocol",
             "pages": [
               "protocol/architecture",
-              "protocol/gateway",
               "protocol/cryptography",
               "protocol/security-model"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/payload-schema"
             ]
           },
           {
