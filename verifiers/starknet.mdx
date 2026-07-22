@@ -1,119 +1,318 @@
 ---
 title: "Starknet Verifier"
-description: "On-chain Schnorr verification for Molpha on Starknet: a Cairo contract that verifies one chain-agnostic signed payload."
+description: "Integrate Molpha's Cairo verifier: call verify(), map gateway payloads, and own freshness/replay in your consumer contract."
 ---
 
-The **Starknet Verifier** is a Cairo contract that performs on-chain verification of Molpha payloads on Starknet. Like every Molpha verifier, it holds a mirror of the registered node set and checks a single aggregated Schnorr signature over a self-contained data payload — so the same value the node network signs once is trustlessly verifiable on Starknet.
+Source: [`molpha/molpha-starknet`](https://github.com/molpha/molpha-starknet) · Cairo / Scarb `2.18+` · snforge `0.61+`
+
+The Starknet Verifier is a **stateless** on-chain check: given a `DataUpdate` and an aggregate Schnorr signature, it answers one question — *did enough selected Molpha nodes sign this exact payload under the stated registry version?* It does not store feeds, rounds, or consumed updates. Your contract owns freshness, replay, feed authorization, and value decoding.
 
 <Note>
-**Solana is the canonical chain.** Feeds, staking, deposits, rewards, and the authoritative node registry live on Solana. The Starknet deployment carries only a *mirror* of the node public-key set (versioned snapshots) plus this lightweight verifier. It stores **no** feed, round, or feed state — everything it needs arrives in calldata and is checked cryptographically.
+**Solana is the canonical chain.** Feeds, staking, and the authoritative node registry live on Solana. Each Starknet deployment mirrors the node public-key set as versioned per-`(version, index)` coordinate maps and exposes `verify` as a view entrypoint. The signed message intentionally omits `chainId`, so one gateway payload verifies on Starknet and every supported EVM chain unchanged.
 </Note>
 
-## One signature, every chain
+## Quick start
 
-The Molpha signed message deliberately **omits `chainId`**. The node network signs `(feed_id, value, timestamp, …)` once, and the Starknet verifier checks that exact same message — no re-signing, no chain-specific payload. This is what lets a single signed result be consumed on Starknet alongside any other supported chain.
+1. Pin a deployed verifier address from [Deployments](/verifiers/deployments).
+2. Map a gateway `DataUpdateResult` with [`buildStarknetVerifierArgs`](/sdk/reference#buildstarknetverifierargs) (or build the structs yourself).
+3. Call `verify` and **require the boolean** — a bad signature returns `false`, it does not revert.
+4. Enforce your own freshness / replay / `feed_id` checks before using `value`.
 
-## What the Verifier does
+```cairo
+use verifier::interface::{
+    DataUpdate, IVerifierDispatcher, IVerifierDispatcherTrait, SchnorrSignature,
+};
 
-<CardGroup cols={2}>
-  <Card title="Node registry" icon="users">
-    Mirrors up to 256 nodes and their secp256k1 public keys. Every add/remove creates a new immutable registry version.
-  </Card>
-  <Card title="Deterministic selection" icon="dice">
-    Derives the per-round signer group from a seed bound to the data payload, so callers cannot grind which nodes are eligible to sign.
-  </Card>
-  <Card title="Plain-sum aggregation" icon="key">
-    Reconstructs the coalition public key by summing the keys of the actual signers, then verifies one Schnorr signature against it.
-  </Card>
-  <Card title="Stateless verification" icon="shield-check">
-    `verify` is self-contained: the signed payload carries everything needed, and the result is permissionlessly verifiable.
-  </Card>
-</CardGroup>
+let v = IVerifierDispatcher { contract_address: VERIFIER };
+assert(v.verify(data_update, sig), 'molpha: not verified');
+assert(data_update.feed_id == EXPECTED_FEED, 'molpha: wrong feed');
+// enforce staleness / replay, then decode data_update.value and settle
+```
 
-The full verification pipeline, signer-selection algorithm, and domain separators are shared by every Molpha chain and documented once in [Cryptography](/protocol/cryptography). On Starknet, the final curve check uses **native secp256k1 syscalls**: the contract computes `s·G − e·P` directly and compares its Ethereum-style address to the commitment.
+Full consumer walkthrough: [Verify on Starknet](/guides/verify-on-starknet).
 
 ---
 
-## Core concepts
+## What the contract does (and does not)
 
-### Registry versions
+| Does | Does not |
+| --- | --- |
+| Mirror up to 256 node pubkeys in versioned storage maps | Aggregate signatures off-chain or publish feed values |
+| Derive a deterministic per-round signer group | Enforce timestamp freshness or replay windows |
+| Sum submitted signers' keys and check one Schnorr signature via native secp256k1 syscalls | Decide whether a `feed_id` is authorized for your app |
+| Keep historical registry versions permanently verifiable | Persist that an update was consumed |
 
-The node set is **append-only and versioned**. Every `add_node` / `remove_node` creates a new immutable registry version, copying the prior node set forward. Historical snapshots are never mutated, so **a payload signed against an older registry version stays permanently verifiable**.
+Shared crypto (selection, message hash, Schnorr identity): [Cryptography](/protocol/cryptography). On Starknet the final curve check computes `s·G + (Q−e)·P` directly and compares its Ethereum-style address to the commitment — mathematically identical to the EVM `ecrecover` path.
 
-- Index `0` of each version is the **plain-sum aggregate key** of all nodes in that version.
-- Indices `1 .. node_count` hold the individual node keys.
-- A `DataUpdate` is always verified against the exact `registry_version` it was signed for, even when newer versions exist.
+---
 
-The protocol caps a registry at **256 nodes** (`MAX_NODES`) — exactly what a single 256-bit `signers_bitmap` can address.
+## Install / depend on the contracts
 
-### Redundancy buffer and group size
+```bash
+git clone https://github.com/molpha/molpha-starknet.git
+cd molpha-starknet
+scarb build
+snforge test
+cd verifier && scarb run bench   # optional: L2 gas benchmarks
+```
 
-For each round the contract selects a signer group slightly larger than the strict threshold, so a few nodes can drop out without failing the round:
+As a Scarb dependency (example):
+
+```toml
+[dependencies]
+verifier = { git = "https://github.com/molpha/molpha-starknet.git" }
+```
+
+```cairo
+use verifier::interface::{
+    DataUpdate, IVerifierDispatcher, IVerifierDispatcherTrait, SchnorrSignature,
+};
+use verifier::verifier::Verifier;
+```
+
+Key paths in the repo:
+
+| Path | Purpose |
+| --- | --- |
+| `verifier/src/verifier.cairo` | Registry + `verify` |
+| `verifier/src/interface.cairo` | Structs and `IVerifier` API |
+| `verifier/src/schnorr.cairo` | secp256k1 Schnorr via native syscalls |
+| `verifier/src/node_group_bitmap.cairo` | Unbiased signer-group derivation |
+| `verifier/src/secp256k1_utils.cairo` | Decompress, EC add/mul, eth-address |
+| `scripts/deploy_testnet.sh` | Sepolia deploy |
+| `scripts/add_node.sh` | Single-node registration + PoP |
+
+---
+
+## Calldata: structs
+
+Defined in `interface.cairo`.
+
+### `DataUpdate`
+
+```cairo
+struct DataUpdate {
+    feed_id: u256,             // chain-agnostic feed id
+    registry_version: u32,     // snapshot the signature was built against
+    signatures_required: u32,  // threshold for this update
+    value: u256,               // opaque 32-byte result (feed-defined encoding)
+    canonical_timestamp: u64,  // unix seconds; part of the signed message
+}
+```
+
+### `SchnorrSignature`
+
+```cairo
+struct SchnorrSignature {
+    signature: u256,      // aggregate Schnorr scalar `s`
+    commitment: felt252,  // eth-address of nonce point `R` (low 160 bits)
+    signers_bitmap: u256, // bit (i-1) set iff 1-based registry index i signed
+}
+```
+
+### Gateway → on-chain mapping
+
+| Gateway `DataUpdateResult` | On-chain field |
+| --- | --- |
+| `feedId` | `DataUpdate.feed_id` |
+| `registryVersion` | `DataUpdate.registry_version` |
+| `signaturesRequired` | `DataUpdate.signatures_required` |
+| `valuePacked` | `DataUpdate.value` |
+| `timestamp` | `DataUpdate.canonical_timestamp` |
+| `s` | `SchnorrSignature.signature` |
+| `commitmentAddr` | `SchnorrSignature.commitment` |
+| `signersBitmap` | `SchnorrSignature.signers_bitmap` |
+
+```ts
+import { buildStarknetVerifierArgs } from "@molpha/sdk";
+
+const { dataUpdate, schnorrSignature } = buildStarknetVerifierArgs(result);
+// pass into verifier.verify(dataUpdate, schnorrSignature) via starknet.js / your dispatcher
+```
+
+---
+
+## `verify`
+
+```cairo
+fn verify(
+    self: @TContractState,
+    data_update: DataUpdate,
+    schnorr_data: SchnorrSignature,
+) -> bool;
+```
+
+### Pipeline (in order)
+
+1. `data_update.registry_version <=` latest stored version (else `'Invalid registry version'`).
+2. Snapshot has at least one node (else `'No nodes'`).
+3. Structural guards: non-zero `signatures_required`, `signers_bitmap`, `signature`, `commitment`.
+4. `popcount(signers_bitmap) >= signatures_required` (else `'Not enough signatures'`).
+5. Derive selection set; require `signers_bitmap ⊆ selection_bitmap` (else `'Signer not selected'`).
+6. Sum signers' public keys in ascending index order; verify Schnorr over the canonical message.
+7. Return `true` / `false` for crypto validity — **do not treat `false` as a revert**.
+
+<Warning>
+Always `assert(verifier.verify(...))`. A cryptographically invalid signature returns `false` without reverting. Structural / policy failures revert with short panic strings.
+</Warning>
+
+### Signed message
 
 ```text
+message = keccak256(
+  keccak256("MOLPHA_MESSAGE_V1") ‖
+  feed_id ‖
+  registry_version ‖
+  signatures_required ‖
+  signers_bitmap ‖
+  value ‖
+  canonical_timestamp
+)
+```
+
+Big-endian field packing matches the EVM `abi.encodePacked` layout. No `chainId`. Same digest verifies on every EVM and Starknet deployment.
+
+### Selection seed and group size
+
+```text
+selection_seed = keccak256(
+  keccak256("MOLPHA_SELECTION_V1") ‖
+  feed_id ‖
+  registry_version ‖
+  canonical_timestamp
+)
+
 group_size = min(signatures_required + redundancy_buffer, node_count)
 ```
 
-`redundancy_buffer` is a protocol-admin parameter. The actual signers must be a subset of this selected group, and there must be at least `signatures_required` of them.
+`node_group_bitmap` expands the seed with `keccak256(seed ‖ keccak256("MOLPHA_SELECTION_DERIVE") ‖ counter)`, samples without replacement (bias-rejecting `u32` limbs), and uses the complement path when `group_size > node_count / 2`.
 
-### Signers bitmap
+### Bitmap convention
 
-Participation is encoded as a `u256` bitmap: **bit `i-1` is set iff the 1-based node index `i` signed.** With at most 256 nodes, a single `u256` is always sufficient.
-
----
-
-## Data structures
-
-### `DataUpdate` — the signed result payload
-
-```cairo
-pub struct DataUpdate {
-    pub feed_id: u256,             // identifier of the feed
-    pub registry_version: u32,    // node-set snapshot the signature is bound to
-    pub signatures_required: u32, // minimum signers (threshold) for this round
-    pub value: u256,              // the canonical result being attested
-    pub canonical_timestamp: u64, // round timestamp (part of the signed message)
-}
-```
-
-### `SchnorrSignature` — the aggregate signature
-
-```cairo
-pub struct SchnorrSignature {
-    pub signature: u256,      // aggregate Schnorr scalar s
-    pub commitment: felt252,  // eth-address of the nonce point R (low 160 bits)
-    pub signers_bitmap: u256, // bit (i-1) set iff 1-based signer index i participated
-}
-```
-
-A gateway response maps directly onto these structs, so the SDK can build calldata from the same fields it returns.
+**Bit `i - 1` ↔ 1-based registry index `i`.** Index `0` in each snapshot is the running aggregate key, not a signer. Node indices can change after `remove_node` (swap-and-pop); resolve live indices with `get_node_index(node)`.
 
 ---
 
-## Verifying a data update
+## Consumer checklist
 
-```cairo
-fn verify(data_update: DataUpdate, schnorr_data: SchnorrSignature) -> bool;
-```
+Do these in your contract (or off-chain client) around every `verify` call:
 
-`verify` returns `true` for a valid signature and `false` for a cryptographically invalid one. **Structural / policy violations revert** (bad registry version, empty registry, zeroed inputs, too few signers, or a signer outside the selection set). Integrators should treat a revert and a `false` return as equivalent "not verified" outcomes.
-
-The checks run in order:
-
-1. The `registry_version` exists and has at least one node.
-2. Structural guards: non-zero `signatures_required`, `signers_bitmap`, `signature`, `commitment`.
-3. `popcount(signers_bitmap) ≥ signatures_required`.
-4. Signers ⊆ the deterministically derived selection set.
-5. The aggregate Schnorr signature over the canonical message.
-
-<Warning>
-`verify` returns a boolean for a bad signature rather than reverting. Consumer contracts **must** check the return value, or they will silently accept unverified data.
-</Warning>
+1. **Require** the boolean return value.
+2. **Authorize** `feed_id` (and optionally `signatures_required`) for your product.
+3. **Freshness** — compare `canonical_timestamp` to your clock / block time.
+4. **Replay** — track last timestamp / digest if the same valid payload must not settle twice.
+5. **Decode** `value` with your feed's encoding; treat it as opaque `u256` until then.
+6. Pass the **exact** `registry_version` used when the nodes signed (historical versions stay valid).
 
 ---
 
-## Consumer integration
+## Registry & admin API
 
-See [Verify on Starknet](/guides/verify-on-starknet) for the consumer-contract walkthrough and integration checklist. Because the Verifier is stateless with respect to feeds, **your contract owns any freshness, replay, or value-bounds policy** — `verify` only attests that the node network signed `(feed_id, value, timestamp, …)` against a given registry version.
+Only `protocol_admin` can mutate the registry or redundancy buffer.
 
-A successful `verify` proves at least `signatures_required` keys from the mirrored `registry_version` signed the exact `DataUpdate`, and that every signer is inside the deterministic selection set. It does **not** prove freshness, prevent replay, or independently prove that the payload corresponds to genuine Solana feed state. Those guarantees — and the protocol's admin powers — are covered in the [Security Model](/protocol/security-model).
+| Function | Notes |
+| --- | --- |
+| `add_node(compressed_pubkey, pop)` | Decompresses key, checks PoP, appends, copies prior set into a new version |
+| `remove_node(node)` | Subtracts key, swap-and-pop if not tail, new version |
+| `set_redundancy_buffer(u256)` | Admin-set; used as `group_size = signatures_required + buffer` |
+| `transfer_protocol_admin(ContractAddress)` | Non-zero address required |
+
+### Proof-of-possession (registration only)
+
+```text
+pop_digest = keccak256(
+  keccak256("MOLPHA_VALIDATOR_V1") ‖
+  contract_address ‖   // 32-byte Starknet address
+  compressed_pubkey
+)
+```
+
+PoP is verified at `add_node` and is not part of `verify`. The EVM verifier hashes a 20-byte `address(this)` instead; nodes register per deployment with a chain-specific PoP. Cross-chain `verify` payloads are unaffected.
+
+### Reads
+
+| Function | Returns |
+| --- | --- |
+| `get_registry_version()` | Latest version index |
+| `get_total_nodes()` | Active node count (latest) |
+| `is_node(felt252)` / `get_node_index(felt252)` | Membership / 1-based index (`0` if inactive) |
+| `get_aggregate_key()` | Plain-sum `(x, y)` of the latest set |
+| `get_protocol_admin()` / `get_redundancy_buffer()` | Public getters |
+
+Registry version `0` is the empty constructor snapshot. See [Registry Versions](/concepts/registry-versions).
+
+### Storage model
+
+Unlike EVM SSTORE2 blobs, Cairo stores each key as `key_x` / `key_y` maps keyed by packed `(version, index)`. Every `add_node` / `remove_node` copies the prior node set forward into a new immutable version — same permanence guarantee as EVM.
+
+---
+
+## Errors
+
+`verify` / admin paths panic with these short strings when inputs are malformed or policy fails. Invalid crypto after passing guards returns `false` instead.
+
+| Panic string | Typical cause |
+| --- | --- |
+| `'Invalid registry version'` | Version greater than latest |
+| `'No nodes'` | Empty registry for that version |
+| `'Zero signatures required'` / `'Zero signers bitmap'` / `'Zero signature'` / `'Zero commitment'` | Zeroed fields |
+| `'Not enough signatures'` | Bitmap popcount below threshold |
+| `'Signer not selected'` | Signer outside derived selection set |
+| `'Not protocol admin'` / `'Zero admin'` / `'Node already added'` / `'Not node'` / `'Max nodes reached'` / `'Invalid PoP'` / … | Admin / registration failures |
+
+---
+
+## Gas (reference)
+
+Measured with `scarb run bench` / `snforge test benchmarks --gas-report` (snforge `0.61`). Baseline fixture: **10 nodes**, `redundancy_buffer=2`, `signatures_required=3`, 5 signers.
+
+| Selector | L2 gas (approx.) |
+| --- | --- |
+| `verify` (success) | ~24.7M |
+| `add_node` (1st / 10th) | ~22.8M / ~25.6M |
+| `remove_node` | ~5.1M |
+| `get_total_nodes` | ~49k |
+| `get_aggregate_key` | ~116k |
+
+Signer-scaling for `verify` (18-node registry, redundancy buffer `2`):
+
+| Signers | L2 gas | group_size |
+| ---: | ---: | ---: |
+| 3 | 24 469 138 | 5 |
+| 5 | 24 871 970 | 5 |
+| 9 | 27 487 149 | 9 |
+| 12 | 26 560 466 | 12 |
+| 18 | 25 540 671 | 18 |
+
+Cost is not strictly linear in signer count: `node_group_bitmap::derive` switches algorithms when `group_size > n/2` or `= n`. Aggregation + Schnorr still dominate.
+
+---
+
+## Deploy & operate nodes
+
+Deploy to Starknet Sepolia with `scripts/deploy_testnet.sh` (requires a configured `sncast` account and `PROTOCOL_ADMIN` in `.env`). Default redundancy buffer is `2` (`REDUNDANCY_BUFFER`).
+
+```bash
+cp .env.example .env
+# set PROTOCOL_ADMIN, optional REDUNDANCY_BUFFER / STARKNET_RPC_URL
+./scripts/deploy_testnet.sh
+```
+
+Register nodes (admin only) with `scripts/add_node.sh` — signs a secp256k1 PoP and invokes `add_node`. Prefer passing public PoP material in production; never commit private keys.
+
+```bash
+npm install --prefix scripts
+./scripts/add_node.sh
+# or:
+./scripts/add_node.sh 0xVERIFIER_ADDRESS 0xNODE_PRIVATE_KEY
+```
+
+Addresses and testnet status: [Deployments](/verifiers/deployments).
+
+---
+
+## Security surface
+
+- Treat every deployment as a **verification component**, not a full oracle product. Review registry ops, consumer freshness/replay, and feed authorization before production use.
+- Cross-chain parity: unmodified EVM-produced signatures are accepted in `parity.cairo` / `e2e.cairo` tests.
+- Protocol trust assumptions: [Security Model](/protocol/security-model).

@@ -6,24 +6,9 @@ icon: "diagram-project"
 
 ## The flow
 
-```mermaid
-flowchart TB
-    Solana["Solana canonical<br/>registry, feeds, subscriptions"]
-    Gateway["Gateway<br/>access and round dispatch"]
-    Nodes["Off-chain network<br/>fetch, converge, PoP-Schnorr sign"]
-    Consumer["Consumer or application"]
-    SolanaFeed["Solana Feed account"]
-    Verifier["EVM or Starknet verifier<br/>stateless verify"]
-
-    Solana -->|mirror| Nodes
-    Consumer -->|round request| Gateway
-    Gateway --> Nodes
-    Nodes -->|DataUpdate + sig| Gateway
-    Gateway -->|signed payload| Consumer
-    Consumer -->|submit_data_update| SolanaFeed
-    Consumer -->|verify| Verifier
-    SolanaFeed -.->|read latest| Consumer
-```
+<Frame>
+  <img src="/img/flow.png" alt="Molpha architecture: Solana canonical layer mirrors to off-chain nodes, which produce DataUpdate + sig verified on EVM/Starknet and consumed by application contracts" />
+</Frame>
 
 ## Step by step
 
