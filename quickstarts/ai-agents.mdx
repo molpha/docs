@@ -85,7 +85,7 @@ Derive or reuse a feed, then fetch with `payment: "auto"`:
 <Warning>
 **Fund the agent before the first paid request**
 
-For a newly configured agent with neither a subscription nor USDC, `payment: "auto"` first finds no active subscription and then cannot fund the x402 escrow, so this prompt fails. Payment setup is in step 5 below — provision a [subscription](/access-models/subscriptions) or fund the signer/escrow before issuing it.
+For a newly configured agent with neither a subscription nor USDC, `payment: "auto"` first finds no active subscription and then cannot fund the x402 escrow, so this prompt fails. Payment setup is in step 5 below — provision a [subscription](/access-models/subscriptions) or fund the signer/escrow with Devnet USDC from [Circle's faucet](https://faucet.circle.com/) (select **USDC** on **Solana Devnet**) before issuing it.
 </Warning>
 
 > Derive a Molpha feedId for `https://api.example.com/v1/finalized/price` using `$.price` and 3 required signatures. Then fetch a signed result with `payment: "auto"` and a maximum age of 60 seconds for EVM. Summarize the signed value, payment mode used, and EVM verifier call arguments. Do not submit a transaction.
