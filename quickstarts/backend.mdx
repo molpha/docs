@@ -46,7 +46,7 @@ await sdk.solana.subscribe(PlanType.Basic, {
 });
 ```
 
-`maxPriceUsdc` is a safety bound: the transaction aborts if the on-chain price exceeds what you approved. Needs Devnet SOL for fees and Devnet USDC for the plan.
+`maxPriceUsdc` is a safety bound: the transaction aborts if the on-chain price exceeds what you approved. Needs Devnet SOL for fees and Devnet USDC for the plan — get USDC from [Circle's faucet](https://faucet.circle.com/) (select **USDC** on **Solana Devnet**).
 
 If a separate hot key will sign gateway auth instead of the subscription owner, register it with [`add_delegate`](/access-models/delegates) before calling `requestSignedData`.
 
