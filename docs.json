@@ -21,11 +21,17 @@
         "href": "mailto:contact@molpha.io"
       },
       {
-        "label": "GitHub",
+        "label": "",
+        "icon": "github",
         "href": "https://github.com/molpha"
       },
       {
-        "label": "npm",
+        "label": "",
+        "icon": "discord",
+        "href": "https://discord.molpha.io"
+      },
+      {
+        "label": "SDK",
         "href": "https://www.npmjs.com/package/@molpha/sdk"
       }
     ]
