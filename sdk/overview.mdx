@@ -168,7 +168,7 @@ const result = await sdk.gateway.requestSignedData({
 
 Live gateway rounds return `fresh: true`. Gateway execution is authenticated via `signAuthMessage` (or a keypair-derived signer); the HTTP gateway rejects all-zero `authSig` values.
 
-For private APIs, pass `encrypt: { secrets: { ... } }` — `MolphaSDK` authenticates gateway node keys against on-chain Node accounts before encrypting. See the [SDK gateway API](/sdk/gateway-api).
+For private APIs, pass `encrypt: { secrets: { ... } }` — `MolphaSDK` authenticates gateway node keys against on-chain Node accounts before encrypting. See the [gateway client](/sdk/gateway-api).
 
 ### Submission and reads
 

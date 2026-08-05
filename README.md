@@ -27,7 +27,7 @@ Navigation uses two top-level tabs:
 | Tab | Purpose |
 | --- | --- |
 | **Documentation** | Start from developer journeys, then dive into agents, access models, gateways, verifiers, and protocol specs |
-| **SDK Reference** | `@molpha/sdk` overview, gateway API, and type reference |
+| **SDK Reference** | `@molpha/sdk` overview, gateway client, and type reference |
 
 ### Documentation sidebar
 
@@ -39,7 +39,7 @@ Documentation/
 ├── Access Models/        # Subscriptions, Delegates, x402 escrow
 ├── Core Concepts/        # Feeds, rounds & signatures, registry versions, payloads
 ├── Guides/               # Create/update, read/verify, EVM & Starknet verification
-├── Gateways/             # Gateway overview and HTTP API
+├── Gateways/             # Gateway overview and OpenAPI HTTP API
 ├── Verifiers/            # Solana, EVM, Starknet, deployments
 ├── Protocol/             # Architecture, cryptography, security
 ├── Operators/            # Run gateway infrastructure
