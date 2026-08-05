@@ -25,8 +25,8 @@ description: "What verification guarantees, what it doesn't, and the current tes
 | Unauthorized feed writes on Solana | `submit_data_update` re-verifies the aggregate signature on every write; monotonic `canonical_timestamp` |
 | Look-alike feed accounts | Consumers validate the `Feed` PDA with `seeds::program = MOLPHA_PROGRAM_ID` |
 
-## Current trust assumptions (Albyn testnet)
+## Current trust assumptions (Brebeneskul devnet)
 
 - **Protocol admin** controls node registration (`addNode`/`removeNode`) and the redundancy buffer on every registry. The registered node set plus the admin are the entire trust root of the stateless verifiers.
 - **Pre-audit.** No external audit has been completed; mainnet is gated on it.
-- **No economic security yet.** Staking, slashing, and reward accounting are not live; node honesty on testnet is not economically enforced.
+- **Partial economic security.** Staking and reward accounting are live on devnet (settlement, finalize/dispute paths, reward claims). Slashing is not — `dispute_round` exists, but A3 (Chivchyn) must first ship Solana registry versioning with historical validation (the prerequisite for dispute adjudication), then broader proof-based operator slashing. The node set remains permissioned; devnet is not production-ready.

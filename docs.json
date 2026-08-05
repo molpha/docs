@@ -21,7 +21,7 @@
         "href": "mailto:contact@molpha.io"
       },
       {
-        "label": "",
+        "label": "github",
         "icon": "github",
         "href": "https://github.com/molpha"
       },
@@ -96,7 +96,17 @@
             "group": "Gateways",
             "pages": [
               "gateways/overview",
-              "protocol/gateway"
+              {
+                "group": "Gateway API",
+                "openapi": "gateway-openapi.yaml",
+                "pages": [
+                  "GET /health",
+                  "GET /v1/nodes",
+                  "POST /v1/round/execute",
+                  "POST /v1/agent/execute",
+                  "GET /v1/agent/{payer}/status"
+                ]
+              }
             ]
           },
           {
@@ -151,8 +161,48 @@
   "footer": {
     "socials": {
       "x": "https://x.com/molpha_oracle",
+      "discord": "https://discord.molpha.io",
       "github": "https://github.com/molpha",
       "linkedin": "https://www.linkedin.com/company/molpha-oracle"
+    }
+  },
+  "api": {
+    "openapi": "gateway-openapi.yaml",
+    "playground": {
+      "display": "interactive"
+    },
+    "params": {
+      "expanded": "all"
+    },
+    "examples": {
+      "languages": ["curl", "javascript", "python", "go"],
+      "defaults": "required",
+      "prefill": true,
+      "autogenerate": true
+    }
+  },
+  "contextual": {
+    "options": ["copy", "download-spec", "chatgpt", "claude"]
+  },
+  "seo": {
+    "indexing": "navigable",
+    "metatags": {
+      "og:site_name": "Molpha Docs",
+      "twitter:card": "summary_large_image",
+      "twitter:site": "@molpha_oracle",
+      "canonical": "https://docs.molpha.io"
+    },
+    "organization": {
+      "id": "https://molpha.io/#organization",
+      "name": "Molpha",
+      "url": "https://molpha.io",
+      "logo": "https://docs.molpha.io/logo/logo.svg",
+      "sameAs": [
+        "https://x.com/molpha_oracle",
+        "https://discord.molpha.io",
+        "https://github.com/molpha",
+        "https://www.linkedin.com/company/molpha-oracle"
+      ]
     }
   }
 }

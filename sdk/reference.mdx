@@ -32,7 +32,7 @@ export interface RequestSignedDataOptions {
 }
 ```
 
-`apiConfig` must match the feed's committed configuration (same shape passed to `deriveApiConfigHash`). `maxAge` (seconds) lets the gateway return a cached result when one is fresh enough.
+`apiConfig` must match the feed's committed configuration (same shape passed to `deriveApiConfigHash`). `maxAge` (seconds) sets the maximum accepted payload age on the client. Live gateway rounds return `fresh: true`; the HTTP gateway does not cache results ([OpenAPI](/gateways/api/round-execute)).
 
 ## `APIConfig`
 

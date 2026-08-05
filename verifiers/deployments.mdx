@@ -20,16 +20,16 @@ EVM verifiers share the same address across all chains via CREATE2.
 
 ## Live today
 
-- **Solana program on Devnet** (program ID above): node registry, USDC plans/subscriptions, delegates, bonded gateways, maintained `Feed` accounts, permissionless `submit_data_update`, subscription and agent round settlement (`settle_round_receipt` / `settle_agent_round`), finalize/dispute paths, reward claims, and direct Rust verification through `molpha-verifier`.
+- **Solana program on Devnet** (program ID above): node registry, node staking, USDC plans/subscriptions, delegates, bonded gateways, maintained `Feed` accounts, permissionless `submit_data_update`, subscription and agent round settlement (`settle_round_receipt` / `settle_agent_round`), finalize/dispute paths, reward accounting and claims, and direct Rust verification through `molpha-verifier`.
 - **SDK** — [`@molpha/sdk`](https://www.npmjs.com/package/@molpha/sdk) v0.1.0: the full consumer flow (subscribe → derive feed → execute round → submit update → read feed) plus framework-agnostic EVM and Starknet verifier argument builders.
 - **EVM verifiers** — deployed on Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji, and BSC testnet.
 - **Starknet verifier** — deployed on Starknet Sepolia, with cross-chain parity tests proving that unmodified EVM-produced signatures verify on Cairo.
 
 ## Not yet implemented
 
-- **Mainnet-grade slashing economics** — `dispute_round` exists on Solana; broader proof-based operator slashing and mainnet economic security ship in a later milestone. The testnet node set remains permissioned.
-- **Mainnet** — gated on a full protocol audit.
+- **Registry versioning & slashing economics** — A3 (Chivchyn) ships Solana registry versioning with historical validation (prerequisite for dispute adjudication), then broader proof-based operator slashing beyond the existing `dispute_round` path. The devnet node set remains permissioned.
+- **Mainnet** — gated on a full protocol audit. A4 (Dzembronia) targets Solana mainnet-beta, Starknet, and one EVM chain — not every supported chain.
 
 <Warning>
-All deployments are **pre-audit testnet** contracts with a permissioned node set. There is no uptime SLA and no full economic security backing testnet data. Do not rely on them for value. See the [Security Model](/protocol/security-model) for the full trust assumptions.
+All deployments are **pre-audit devnet** contracts with a permissioned node set. Staking and reward accounting are live; slashing is not. There is no uptime SLA and no full economic security backing devnet data. Do not rely on them for value. See the [Security Model](/protocol/security-model) for the full trust assumptions.
 </Warning>

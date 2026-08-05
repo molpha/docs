@@ -1,15 +1,19 @@
 ---
-title: "Gateway API"
+title: "Gateway client"
 description: "Run signing rounds and retrieve ready-to-submit payloads — via the SDK gateway client or the HTTP gateway directly."
 ---
 
 The gateway accepts an execution request for a feed, dispatches a signing round to the deterministically selected node set for the current registry version, and returns a completed [`DataUpdateResult`](/sdk/reference#dataupdateresult) — a payload ready to submit to any chain's verifier. The **recommended access path is the SDK gateway client** (`sdk.gateway`), which handles auth, optional context reuse, and struct assembly.
 
-Default base URL (also exported as `DEFAULT_GATEWAY_ENDPOINT`):
+For raw HTTP integration, use the [Gateway HTTP API](/gateways/api/round-execute) (OpenAPI reference with interactive playground).
 
-```text
-https://dev-gateway.molpha.io/
-```
+## Base URLs
+
+| Environment | URL |
+| --- | --- |
+| Devnet (SDK default) | `https://dev-gateway.molpha.io` |
+
+Also exported as `DEFAULT_GATEWAY_ENDPOINT` from `@molpha/sdk`.
 
 ## `requestSignedData`
 
@@ -22,6 +26,8 @@ const result = await sdk.gateway.requestSignedData({
 ```
 
 Runs a live round against the current on-chain registry version and resolves with a [`DataUpdateResult`](/sdk/reference#dataupdateresult). The SDK may take `feedId` for local context, but the HTTP gateway **derives** feed identity from `(consumerAuthority|payer, apiConfig, signaturesRequired)` and never trusts a client-supplied feed id. Live gateway rounds return `fresh: true`.
+
+Under the hood this calls [`POST /v1/round/execute`](/gateways/api/round-execute) for subscription-backed access, or [`POST /v1/agent/execute`](/gateways/api/agent-execute) for x402 agent access.
 
 Execution is authenticated with an `authSig` produced by the wallet's `signAuthMessage` (or derived from a keypair-backed `Wallet.payer`). The gateway requires a valid 64-byte Ed25519 `authSig` — all-zero signatures are rejected.
 
@@ -56,7 +62,7 @@ const result = await sdk.gateway.requestSignedData({
 });
 ```
 
-Fetches registry version, redundancy buffer, and the node set, and returns a [`RoundContext`](/sdk/reference#roundcontext). Pass it back via `context` to skip those prelude fetches on subsequent rounds. There is no automatic client-side cache — reuse is explicit.
+Fetches registry version, redundancy buffer, and the node set (via [`GET /v1/nodes`](/gateways/api/nodes)), and returns a [`RoundContext`](/sdk/reference#roundcontext). Pass it back via `context` to skip those prelude fetches on subsequent rounds. There is no automatic client-side cache — reuse is explicit.
 
 ## Response shape
 
@@ -79,10 +85,7 @@ The flat `DataUpdateResult` maps 1:1 onto every chain's verifier structs via [`b
 
 ## HTTP gateway notes
 
-- **Authentication:** requests carry an `authSig` produced by the caller's wallet (`signAuthMessage` or keypair-derived). The gateway verifies it; all-zero signatures fail with `401`.
+- **Authentication:** subscription rounds use `authSig` over `RequestAuth`; agent rounds use `agent_request_auth_sig` over `AgentRequestAuth`. See the [Gateways guide](/gateways/overview) for hash definitions.
 - **Freshness:** live execute responses set `fresh: true`. To read a previously submitted Solana value without a new round, [read the `Feed` account](/guides/read-and-verify).
 - **Registry:** pass `prepareContext(feedId)` result as `context` to reuse registry version, redundancy buffer, and nodes across rounds.
-
-<Note>
-The current HTTP route for subscription-backed rounds is `POST /v1/round/execute`. Clients send `apiConfig`, `signaturesRequired`, `registryVersion`, and `authSig`; the gateway derives `feedId` and echoes it in the response. Agent pay-per-request rounds use `POST /v1/agent/execute` with exact `amount` (not `max_price`). Full schemas: [Gateway API](/protocol/gateway).
-</Note>
+- **Agent status:** [`GET /v1/agent/{payer}/status`](/gateways/api/agent-status) returns advisory escrow state for x402 flows.
