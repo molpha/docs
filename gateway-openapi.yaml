@@ -14,7 +14,6 @@ paths:
       description: Liveness probe for the gateway process.
       x-mint:
         metadata:
-          href: /gateways/api/health
           sidebarTitle: Health
         content: |
           Returns `200` when the gateway process is healthy and `503` when a configured health check fails.
@@ -43,7 +42,6 @@ paths:
       description: Oracle node set for the current gateway deployment.
       x-mint:
         metadata:
-          href: /gateways/api/nodes
           sidebarTitle: Nodes
         content: |
           Returns the oracle node set configured for this gateway, including libp2p peer IDs and on-chain signing keys.
@@ -68,7 +66,6 @@ paths:
       description: Subscription-backed signing round for feed owners and delegates.
       x-mint:
         metadata:
-          href: /gateways/api/round-execute
           sidebarTitle: Round execute
         content: |
           Triggers a live oracle round for a subscription owner or active delegate and returns a threshold-signed `DataUpdateResponse`.
@@ -178,7 +175,6 @@ paths:
       description: Self-funded pay-per-request round via agent escrow.
       x-mint:
         metadata:
-          href: /gateways/api/agent-execute
           sidebarTitle: Agent execute
         content: |
           Runs a pay-per-request signing round for agents without a Molpha subscription. The payer funds a per-gateway escrow ATA, locks an exact USDC `amount`, and signs `AgentRequestAuth`.
@@ -294,7 +290,6 @@ paths:
       description: Escrow balance, committed spend, and quoted next round price.
       x-mint:
         metadata:
-          href: /gateways/api/agent-status
           sidebarTitle: Agent status
         content: |
           Advisory read of x402 escrow state for one payer at this gateway. The escrow PDA is derived server-side from `(payer, gateway)`.
