@@ -98,13 +98,12 @@
               "gateways/overview",
               {
                 "group": "Gateway API",
-                "openapi": "gateway-openapi.yaml",
                 "pages": [
-                  "GET /health",
-                  "GET /v1/nodes",
-                  "POST /v1/round/execute",
-                  "POST /v1/agent/execute",
-                  "GET /v1/agent/{payer}/status"
+                  "gateways/api/health",
+                  "gateways/api/nodes",
+                  "gateways/api/round-execute",
+                  "gateways/api/agent-execute",
+                  "gateways/api/agent-status"
                 ]
               }
             ]
