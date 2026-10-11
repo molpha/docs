@@ -1,94 +1,68 @@
 ---
 title: "Molpha"
-description: "Build applications that can prove where their data came from."
+sidebarTitle: "Overview"
+description: "Turn any HTTP API into threshold-signed data that verifies on Solana, EVM and Starknet."
+icon: "house"
 ---
 
-# Build with verifiable data.
+**Any API. One threshold signature. Every chain.**
 
-Every application depends on external APIs. Until now, consumers had to trust whoever fetched the data.
-
-Molpha lets you prove it.
-
-Turn any HTTP API into cryptographically verifiable data that can be consumed by AI agents, smart contracts, or backend services. Every response is independently fetched, threshold-signed by the Molpha network, and verifiable anywhere.
-
-> One API. One threshold signature. Every supported chain.
+Molpha turns an HTTP API response into an **attestation**: a value fetched by independent nodes, agreed on, and signed once with a single aggregate Schnorr signature. The same attestation verifies on Solana, on EVM chains and on Starknet, and an AI agent, backend or smart contract can check it without trusting whoever delivered it.
 
 <CardGroup cols={3}>
-  <Card icon="robot" href="/quickstarts/ai-agents" title="AI Agents">
-    Give AI agents access to verifiable external data through MCP with built-in payment and verification.
+  <Card icon="robot" href="/quickstarts/ai-agents" title="AI agents">
+    Connect an agent to Molpha over MCP in minutes.
   </Card>
-
-  <Card icon="file-contract" href="/quickstarts/smart-contracts" title="Smart Contracts">
-    Verify signed API responses on EVM, Solana or Starknet without trusting gateways or relayers.
-  </Card>
-
   <Card icon="server" href="/quickstarts/backend" title="Backends">
-    Fetch threshold-signed data from any backend service using the TypeScript SDK.
+    Request and publish signed data with the TypeScript SDK.
+  </Card>
+  <Card icon="file-contract" href="/quickstarts/smart-contracts" title="Smart contracts">
+    Verify an attestation on EVM, Solana or Starknet.
   </Card>
 </CardGroup>
 
----
+## How it works
 
-## Why Molpha?
+```mermaid
+flowchart LR
+    App["Your app, backend or agent"] -->|"apiConfig + quorum"| GW["Molpha gateway"]
+    GW -->|"dispatch round"| Nodes["Selected nodes<br/>fetch · agree · sign"]
+    Nodes -->|"one aggregate signature"| GW
+    GW -->|"attestation"| App
+    App --> SOL["Solana<br/>submit_attestation → Feed"]
+    App --> EVM["EVM<br/>verify()"]
+    App --> SN["Starknet<br/>verify()"]
+```
 
-Traditional API integrations require trusting whoever made the request.
+<Steps>
+  <Step title="Define a source">
+    Describe the API call and the value to extract. Its `sourceId` is the hash of that config, so there is nothing to register. See [Sources and feeds](/concepts/feeds).
+  </Step>
+  <Step title="Request a round">
+    Pay with a [subscription](/access-models/subscriptions) or per request over [x402](/access-models/x402). The gateway stamps the round and dispatches it.
+  </Step>
+  <Step title="Nodes sign once">
+    A deterministically selected group of registered nodes fetches the API independently, agrees on one value, and produces one aggregate signature. See [Rounds and attestations](/concepts/attestations).
+  </Step>
+  <Step title="Verify anywhere">
+    Submit the attestation to a Solana `Feed` account, or call `verify()` on EVM or Starknet. Verifiers re-derive the signer selection and check one signature against the node set they mirror.
+  </Step>
+</Steps>
 
-Traditional oracle networks require waiting for providers to onboard a feed.
+## Why it verifies everywhere
 
-Molpha removes both.
+- **No `chainId` in the signed message.** Every verifier checks the same bytes, so the same attestation is valid on every supported chain, with no bridge and no per-chain feed.
+- **The signer set is signed.** The bitmap of signers is part of the message and must fall inside the selection that verifiers re-derive themselves.
+- **Stateless verification.** EVM and Starknet verifiers hold only a mirror of the node keys. Everything else arrives in calldata.
+- **Solana is the canonical chain.** The node registry, deposits, subscriptions, rewards and `Feed` accounts live in the Molpha Solana program.
 
-Instead of integrating with an oracle provider, you configure the API you need and receive a threshold-signed response that anyone can verify.
+## What you get
 
-<CardGroup cols={2}>
-<Card title="Without Molpha">
+| | |
+| --- | --- |
+| **Any HTTP API** | Prices, scores, statuses, documents: anything a public or private API returns. |
+| **Pull-based** | Rounds run when you ask. No heartbeat to fund, no feed to wait for. |
+| **Agent-ready** | An MCP server, hosted or local, with x402 pay-per-request and wallet sign-in. |
+| **USDC pricing** | Subscriptions and per-request payments in USDC on Solana. No protocol token. |
 
-- Trust the backend
-- Build custom infrastructure
-- Wait for oracle providers
-- Different integrations per chain
-- No standard flow for AI agents
-
-</Card>
-
-<Card title="With Molpha">
-
-- Verify every response
-- Any HTTP API
-- No approvals
-- Same payload everywhere
-- MCP-native for AI agents
-
-</Card>
-</CardGroup>
-
----
-
-## Choose what you want to build
-
-<CardGroup cols={3}>
-<Card icon="robot" href="/mcp/molpha-mcp" title="MCP">
-Build AI agents that can request and verify external data.
-</Card>
-
-<Card icon="code" href="/sdk/overview" title="SDK">
-Use the TypeScript SDK from any backend or application.
-</Card>
-</CardGroup>
-
----
-
-## Learn the protocol
-
-<CardGroup cols={3}>
-<Card icon="rss" href="/concepts/feeds" title="Feeds">
-How APIs become verifiable data.
-</Card>
-
-<Card icon="wallet" href="/access-models/overview" title="Access">
-Subscriptions, Delegate and x402.
-</Card>
-
-<Card icon="sitemap" href="/protocol/architecture" title="Architecture">
-Network design, signatures and verification.
-</Card>
-</CardGroup>
+Verification proves *who signed what*. Freshness, replay protection and which sources you accept stay your application's policy: see the [consumer checklist](/verifiers/overview#consumer-checklist).

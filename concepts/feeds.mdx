@@ -1,114 +1,94 @@
 ---
-title: "Feeds"
-description: "A Molpha feed is a verifiable data stream backed by a signed payload and, optionally, a maintained Solana account."
-icon: "rss"
+title: "Sources and feeds"
+description: "A source is an API definition identified by its hash. A feed is the Solana account holding the latest verified value for a source."
 ---
 
-A Molpha feed answers one question:
+Two terms appear throughout these docs:
 
-> What exact value did the selected node quorum sign for this data source?
+- A **source** is an API definition: a URL, how to call it, and how to extract one value. It is identified by its `sourceId`, the hash of its canonical config.
+- A **feed** is a Solana `Feed` account holding the latest verified value that one submitter wrote for a source at one quorum.
 
-There is no separate feed-creation transaction. Feed identity is deterministic, and the Solana `Feed` account is created lazily the first time a signed update is written with `submit_data_update`. Gateway settlement writes payment receipts only — it does not create or update the `Feed`.
+There is no feed-creation step. A source exists as soon as you define it, and a `Feed` account is created the first time someone submits an attestation for it.
 
-## Feed lifecycle
-
-```mermaid
-flowchart LR
-    Config["API config"] --> Hash["apiConfigHash"]
-    Hash --> FeedId["derive feedId"]
-    FeedId --> Round["Gateway round"]
-    Round --> Payload["Signed payload"]
-    Payload --> Verify["Stateless verify"]
-    Payload --> SolanaFeed["Optional lazy-created Solana Feed account"]
-```
-
-## Two consumption modes
-
-| Mode | Use when | Trust check |
-| --- | --- | --- |
-| Read latest Solana `Feed` | You want low-latency access to the most recent maintained value | Validate the feed PDA and staleness |
-| Verify payload directly | You need proof inside your own Rust program, service, or test | Use `molpha-verifier` and enforce freshness/replay policy |
-
-## Feed identity
-
-Feed identity is derived from the request authority, API config hash, and quorum:
-
-```text
-feedId = keccak256(
-  "MOLPHA_JOB_V1" || owner || apiConfigHash || [signaturesRequired]
-)
-```
-
-- `owner` is the subscription consumer authority for subscription-backed rounds.
-- `owner` is the payer/authority for x402 agent rounds.
-- `apiConfigHash` is `keccak256(JSON.stringify(canonicalizeAPIConfig(apiConfig)))`.
-- `signaturesRequired` is a single byte.
-
-The domain string still contains `JOB` for compatibility with the deployed program, but the public concept and SDK field are `feedId`.
+## API config
 
 ```ts
-import { deriveApiConfigHash, deriveFeedIdString } from "@molpha/sdk";
-
-const apiConfigHash = deriveApiConfigHash(apiConfig);
-const feedId = deriveFeedIdString(
-  wallet.publicKey.toBytes(),
-  apiConfigHash,
-  signaturesRequired,
-);
+const apiConfig = {
+  url: "https://api.example.com/v1/finalized/price",
+  method: "GET",              // default "GET"
+  headers: {},                // default {}
+  responseParser: "$.price",  // JSONPath to the value
+  valueTransform: "",         // default ""
+};
 ```
 
-## Public data, private config
+`aggregation` is optional and switches the source to [tolerance mode](#exact-and-tolerance-mode). All fields are listed in the [SDK reference](/sdk/reference#apiconfig).
 
-Only the `apiConfigHash` is stored on-chain. The full API config can remain off-chain, and private API secrets can be encrypted for selected nodes through the gateway.
-
-## Solana `Feed` account
-
-The Solana account is keyed by:
+## Source ID
 
 ```text
-["molpha_feed", feed_id]
+sourceId      = keccak256(canonicalJson)
+canonicalJson = compact JSON of { url, method, headers, responseParser, valueTransform[, aggregation] }
+                in exactly that key order, defaults filled in, header names sorted
 ```
 
-It stores:
+- The same config gives the same `sourceId` for everyone, on every chain. It contains no owner, payer or quorum.
+- The canonical form is **not** RFC 8785 (JCS). Derive it with the SDK (`deriveSourceIdString(apiConfig)`) or the MCP `derive_source_id` tool rather than hashing by hand: one differing byte gives a different source.
+- The gateway and the nodes recompute it from the `apiConfig` you send, and the SDK rejects a response that names a different `sourceId`.
+
+### Private configs
+
+Only the `sourceId` reaches the chain. An API key can stay private: reference it as `{{secret.<name>}}` in the config and send the value encrypted for the nodes, so the gateway never sees it. Encrypted secrets work on subscription rounds only. See [Private APIs](/sdk/gateway-api#private-apis).
+
+## Exact and tolerance mode
+
+By default a round is **exact**: every signing node must fetch a byte-identical value. Design exact sources around settled data:
+
+- Prefer finalized values over live-drifting ones.
+- Avoid per-request timestamps, request IDs and unstable ordering in the response.
+- Point `responseParser` at exactly the field you need.
+
+For numeric values that move between fetches, use **tolerance mode**. The nodes share their observations, drop outliers and sign the median:
+
+```json
+"aggregation": {
+  "mode": "tolerance",
+  "rule": "median",
+  "maxDeviationBps": 50,
+  "maxAgeMs": 2000,
+  "numeric": { "type": "int256", "decimals": 8 }
+}
+```
+
+- `aggregation` is part of the `sourceId`, so a source's tolerance settings cannot change without changing its identity.
+- The round needs `signaturesRequired` of at least 3.
+- The signed value is a two's-complement `int256` scaled by `10^decimals`. Leave `valueTransform` empty.
+
+## Values
+
+The signed `value` is always 32 bytes. Its meaning is defined by whoever designs the source:
+
+- Numeric sources should document their scale, for example `value / 10 ** 6`.
+- A value longer than 32 bytes is signed as its `keccak256` hash. The submitter can pass the preimage (up to 256 bytes) to `submit_attestation`, which checks it and marks the feed `Hash`. The preimage is not stored.
+- Decode a value only after verifying the attestation or validating the `Feed` account address.
+
+## Solana feed account
+
+```text
+Feed PDA = ["molpha_feed", source_id, [signatures_required], submitter]
+```
+
+Each submitter maintains its own account for a source and quorum, so a reader decides whose feed it reads. The program re-verifies every write, so a submitter cannot change a value. It only chooses which attestations to submit and when.
 
 | Field | Meaning |
 | --- | --- |
-| `feed_id` | Derived feed identifier |
-| `value` | Stored payload if ≤32 bytes, or keccak digest for longer payloads |
-| `value_kind` | `Value` or `Hash` |
-| `canonical_timestamp` | Monotonic update timestamp |
-| `signatures_required` | Quorum threshold |
-| `signers_bitmap` | Coalition bitmap |
-| `registry_version` | Registry version used for verification |
+| `source_id` | Source identifier |
+| `value` | The signed 32-byte value |
+| `value_kind` | `Value`, or `Hash` when `value` is the hash of a longer preimage |
+| `submitter` | The account that writes this feed |
+| `timestamp` | Unix milliseconds of the latest accepted attestation; strictly increasing |
+| `signatures_required` | Quorum; fixed for the account |
+| `signers_bitmap` | Signers of the latest attestation |
+| `registry_version` | Registry version of the latest attestation; never decreases |
 
-Payloads up to 32 bytes are stored as-is. Payloads up to 256 bytes are hashed with keccak256 and stored as `FeedValueKind::Hash`.
-
-## Values and decoding
-
-The signed `value` is interpreted by the application that owns the feed schema.
-
-- Values up to 32 bytes are stored directly.
-- Longer values up to 256 bytes are stored as a keccak hash.
-- Numeric feeds should document scale explicitly, for example `value / 10 ** 6`.
-- Consumers should decode bytes only after verifying the payload or validating the Solana `Feed` PDA.
-
-## API design checklist
-
-Independent nodes must converge on a byte-identical value to co-sign it:
-
-- Prefer settled, finalized data over live-drifting values.
-- Avoid per-request timestamps, request IDs, and unstable ordering.
-- Pin `responseParser` to the exact field you need.
-- Include `valueTransform` in the config before deriving `feedId`.
-- Reuse the exact same canonical config when requesting signed data.
-
-## Related pages
-
-<CardGroup cols={2}>
-  <Card title="Payload schema" icon="brackets-curly" href="/reference/payload-schema">
-    The portable artifact produced by each round.
-  </Card>
-  <Card title="SDK reference" icon="code" href="/sdk/reference">
-    Derivation helpers and `DataUpdateResult` fields.
-  </Card>
-</CardGroup>
+Reading a feed is free and needs no subscription. [Verify on Solana](/verifiers/solana) shows how to read one from TypeScript or from your own program.

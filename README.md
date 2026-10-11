@@ -4,6 +4,16 @@ Documentation for **Molpha** — verifiable data infrastructure that turns any H
 
 Built with [Mintlify](https://mintlify.com).
 
+## Contributor guide
+
+- [Protocol structure](development/protocol-structure.mdx)
+- [Component responsibilities and internals](development/components.mdx)
+- [Local and end-to-end testing](development/local-testing.mdx)
+
+For coding agents in the multi-repository workspace, start with the workspace-root
+`AGENTS.md`. The contributor guide records current source incompatibilities; old
+reports are historical evidence, not a guarantee that current checkouts interoperate.
+
 ## Local Development
 
 Install the Mintlify CLI:
@@ -36,7 +46,7 @@ Documentation/
 ├── Get Started/          # Home, introduction, how it works
 ├── Quickstarts/          # AI agents, smart contracts, backend, legacy producer flow
 ├── AI Agents/            # Agent overview and MCP integration
-├── Access Models/        # Subscriptions, Delegates, x402 escrow
+├── Access Models/        # Subscriptions, Delegates, x402
 ├── Core Concepts/        # Feeds, rounds & signatures, registry versions, payloads
 ├── Guides/               # Create/update, read/verify, EVM & Starknet verification
 ├── Gateways/             # Gateway overview and OpenAPI HTTP API

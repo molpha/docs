@@ -1,0 +1,84 @@
+---
+title: "Rounds and attestations"
+description: "What one signing round produces, what the signature covers, and how rounds are timed."
+---
+
+A **round** is one signing event: a deterministically selected group of nodes fetches the source's API, agrees on one value, and produces a single aggregate Schnorr signature. The result is an **attestation**, a self-contained object that verifies unchanged on Solana, EVM and Starknet.
+
+## The attestation
+
+An attestation is a `payload` plus a `signature`.
+
+### Payload
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `value` | `bytes32` | The signed result as a 32-byte big-endian word. Its encoding is defined by the source; see [Values](/concepts/feeds#values). |
+| `sourceId` | `bytes32` | `keccak256` of the canonical API config. See [Source ID](/concepts/feeds#source-id). |
+| `registryVersion` | `uint32` | The node-set snapshot the round was signed under. See [Registry versions](/concepts/registry-versions). |
+| `signaturesRequired` | `uint8` | The quorum the round was run at. |
+| `timestamp` | `uint64` | Round time in unix **milliseconds**, assigned by the gateway. See [Round timing](#round-timing). |
+
+### Signature
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `signature` | `bytes32` | Aggregate Schnorr scalar. Named `agg_sig_s` in Rust and `s` in the SDK. |
+| `commitment` | 20 bytes | Ethereum-style address of the aggregate nonce point `R`. Named `commitmentAddr` in the SDK. |
+| `signersBitmap` | 32 bytes | Big-endian bitmap. Bit `i` is set when the node at registry index `i` signed. |
+
+A registry holds at most 256 nodes, so one 32-byte word covers every signer. The number of set bits must be at least `signaturesRequired`.
+
+### The signed message
+
+```text
+message = keccak256(
+  keccak256("MOLPHA_MESSAGE_V1") ||  // 32 bytes
+  value ||                           // 32 bytes
+  sourceId ||                        // 32 bytes
+  u32be(registryVersion) ||          // 4 bytes
+  u8(signaturesRequired) ||          // 1 byte
+  u64be(timestamp) ||                // 8 bytes, unix milliseconds
+  signersBitmap                      // 32 bytes
+)                                    // 141-byte preimage
+```
+
+Two properties follow from this layout:
+
+- **The signer set is committed.** `signersBitmap` is inside the message, so nobody can pick a different set of signers after the fact.
+- **There is no `chainId`.** The same signature is valid on every supported chain.
+
+Every signer must also belong to the round's [selection set](/protocol/cryptography#node-selection), which verifiers re-derive from `sourceId`, `registryVersion` and `timestamp / 1000`.
+
+## What verification proves
+
+A successful verification proves that enough selected nodes from the named registry version signed exactly this payload. It does not prove the value is fresh enough, that it has not been used before, or that it is the source you expected. Those checks are yours: see the [consumer checklist](/verifiers/overview#consumer-checklist).
+
+## Round timing
+
+The caller never supplies a timestamp. The gateway stamps each round with its own clock, rounded down to a 100 ms tick:
+
+```text
+timestamp = floor(nowMs / 100) * 100
+```
+
+The tick (`ROUND_TICK_MS = 100`) is a protocol constant. Nodes reject a round whose timestamp is off the grid or outside their clock window.
+
+- **One round per tick per feed.** A source at one quorum and registry version runs at most one round per tick, so at most 10 rounds per second.
+- **Requests in the same tick share the round.** Nodes run it once and every caller receives the same attestation. Each caller still pays for its own request.
+- **One request per tick per consumer.** A second request from the same consumer (or x402 payer) for the same source and quorum inside one tick gets HTTP `409`. Nothing is reserved; retry after one full tick (100 ms plus a little jitter).
+- **No idempotency key.** A retried request is a new round and spends quota or a payment again.
+- **Selection uses whole seconds.** Selection reads `timestamp / 1000`, so the committee for a source is the same for all ten ticks of a second.
+
+Chain clocks, `maxAge`, epochs and registry activation times are all in **seconds**. Compare them with `timestamp / 1000`.
+
+## Where an attestation goes
+
+| Destination | How |
+| --- | --- |
+| Solana | `submit_attestation` verifies it and writes it to the submitter's `Feed` account. See [Verify on Solana](/verifiers/solana). |
+| EVM | Your contract calls `verify(attestation, maxAge)`. See [Verify on EVM](/verifiers/evm). |
+| Starknet | Your contract calls `verify(attestation, max_age)`. See [Verify on Starknet](/verifiers/starknet). |
+| Off-chain | Verify with the `molpha-verifier` Rust crate, or store it as an audit record. |
+
+The SDK and MCP server return the attestation together with ready-made verifier arguments for each chain. The SDK's TypeScript shape is in the [SDK reference](/sdk/reference#attestation).

@@ -36,17 +36,58 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+  /v1/info:
+    get:
+      summary: Get gateway identity
+      description: Gateway authority, Gateway PDA, program ID, the RequestAuth window, the round timeout, the concurrency limit, the network and the sign-in session settings.
+      x-mint:
+        metadata:
+          sidebarTitle: Info
+        content: |
+          Returns the gateway's static identity. `gatewayAuthority` is the base58 pubkey whose Gateway PDA (`["molpha_gateway", gatewayAuthority]` under `programId`) every [`RequestAuth`](/gateways/overview) binds, so a client needs it before it can sign a subscription request. The SDK fetches it once per gateway endpoint when you do not pass `gatewayAuthority` explicitly.
+
+          The response is static configuration: it needs no authentication and makes no chain, node or database call. `requestAuthWindowSeconds` is how far, in seconds, a request's `authTimestamp` may differ from the gateway clock. `roundTimeoutSeconds` is the longest the gateway waits for a round, and `maxInflightRounds` is how many rounds it runs at once. `sessionAuth` reports whether the [sign-in session](/gateways/api/session-challenge) routes are served; when it is `false`, `publicOrigin` is empty and the session lifetimes are `0`.
+
+          There is no tick field: the 100 ms round tick is a protocol constant (`ROUND_TICK_MS`), which clients hardcode. `roundTimeoutSeconds` is the gateway's wait for the aggregate, not the tick.
+      tags:
+        - gateway
+      responses:
+        "200":
+          description: Gateway identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InfoResponse"
+              example:
+                status: ok
+                data:
+                  gatewayAuthority: 6y8h8UJ8sVYvF7bDkAEHmZnNa2PfXrQkHBTqz1w9yQ7E
+                  gatewayPda: 4Nd1mYQzS5mQd9a8o3Yw2fGzLZk1h9dJ7R2sZb6xT3Vk
+                  programId: MoLPhaXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxX
+                  requestAuthWindowSeconds: 60
+                  roundTimeoutSeconds: 30
+                  maxInflightRounds: 200
+                  network: solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1
+                  sessionAuth: false
+                  publicOrigin: ""
+                  sessionTtlSeconds: 0
+                  sessionMaxTtlSeconds: 0
+                  sessionChallengeTtlSeconds: 0
   /v1/nodes:
     get:
-      summary: Get configured nodes
-      description: Oracle node set for the current gateway deployment.
+      summary: Get on-chain nodes
+      description: The ordered on-chain node set and the registry's selection policy, from one snapshot.
       x-mint:
         metadata:
           sidebarTitle: Nodes
         content: |
-          Returns the oracle node set configured for this gateway, including libp2p peer IDs and on-chain signing keys.
+          Returns the ordered node set of the current on-chain registry version, with libp2p peer IDs, addresses and signing keys, and the selection policy (`registry`) of the same snapshot. The gateway reads this from the chain; it is not gateway configuration.
 
-          The SDK calls this indirectly via `prepareContext()` to fetch registry version, redundancy buffer, and node encryption keys before encrypting private API configs.
+          `signingKey` is a compressed secp256k1 public key in hex. It is the key a private API config is encrypted for. `registry` gives the registry version, the node count and the redundancy buffer, which size the eligible set of a round.
+
+          The gateway refreshes the snapshot in the background. When it has no snapshot, or the snapshot is stale, it returns `503`.
+
+          The SDK reads the node set from this endpoint in `prepareContext()`.
 
           <Tip>
           Pass the result back as `context` on subsequent `requestSignedData` calls to skip prelude fetches.
@@ -55,11 +96,88 @@ paths:
         - nodes
       responses:
         "200":
-          description: Node list
+          description: Node list and registry policy
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/NodesResponse"
+        "503":
+          description: Node directory unavailable or stale
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: node directory unavailable
+  /v1/providers:
+    get:
+      summary: List integrated providers
+      description: The data providers the gateway integrates and the access flows it can serve for each.
+      x-mint:
+        metadata:
+          sidebarTitle: Providers
+        content: |
+          Returns the data providers this gateway integrates, each with the access flows the gateway can serve now (`api_key`, `x402`) and the number of ready-made feeds.
+
+          The response is static configuration: it needs no authentication and makes no provider call. The list is empty when no provider is enabled.
+
+          Use [`GET /v1/providers/{providerId}`](/gateways/api/providers-get) for a provider's hosts, terms and feeds.
+      tags:
+        - providers
+      responses:
+        "200":
+          description: Provider list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProvidersResponse"
+  "/v1/providers/{providerId}":
+    get:
+      summary: Get an integrated provider
+      description: One provider's access flows, each with its host, credential or x402 terms and ready-made feeds.
+      x-mint:
+        metadata:
+          sidebarTitle: Provider
+        content: |
+          Returns one provider: its documentation and terms links, the aggregation its feeds require, the provider routes the gateway acts on (`operations`), and its access flows. Each flow has its own host and a list of ready-made feeds.
+
+          Send a feed's `apiConfig` unchanged to an execute route. It carries no credential, and any change to it changes the `sourceId`.
+
+          ### Flows
+
+          | `kind` | Access to the provider | What the caller sends |
+          | --- | --- | --- |
+          | `api_key` | The gateway holds the key (`credential.mode` is `sponsored`); the caller supplies none | The feed's `apiConfig`, with no key and no headers |
+          | `x402` | The caller pays the provider directly, one authorization per eligible node | The feed's `apiConfig`, then `sourcePayments` after the `402` quote |
+
+          The provider's own prices are in its x402 `catalogUrl` and in its own `402` response.
+
+          Returns `404` for an unknown or disabled provider.
+      tags:
+        - providers
+      parameters:
+        - name: providerId
+          in: path
+          required: true
+          description: Provider ID, as listed by `GET /v1/providers`.
+          schema:
+            type: string
+            example: tickerlayer
+      responses:
+        "200":
+          description: Provider detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderResponse"
+        "404":
+          description: Unknown or disabled provider
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: provider not found
   /v1/round/execute:
     post:
       summary: Execute a subscription round
@@ -68,44 +186,37 @@ paths:
         metadata:
           sidebarTitle: Round execute
         content: |
-          Triggers a live oracle round for a subscription owner or active delegate and returns a threshold-signed `DataUpdateResponse`.
+          Runs a round paid by a subscription, for the subscription owner or one of its [delegates](/access-models/delegates), and returns the signed attestation. The response has the same shape as [`POST /v1/x402/execute`](/gateways/api/x402-execute).
 
-          <Note>
-          Each call is stateless — the gateway does not cache results. Live rounds always set `fresh: true`.
-          </Note>
+          Authenticate with a `RequestAuth` signature in the body or a sign-in session token in the `Authorization` header (sending both returns `400`). Both are described in the [Gateway API overview](/gateways/overview#authentication).
 
-          ### Feed identity
-
-          There is no `feed_id` field in the request body. The gateway derives feed identity from `(consumerAuthority, apiConfig, signaturesRequired)` and echoes it as `data.feedId`.
-
-          ```text
-          feed_id = keccak256("MOLPHA_JOB_V1" || consumerAuthority || api_config_hash || signatures_required)
-          ```
-
-          ### Authentication
-
-          `consumerAuthority` signs `RequestAuth` with its Ed25519 key:
-
-          ```text
-          hash = sha256("MOLPHA_REQAUTH_V1" || feed_id || uint64_le(timestamp))
-          sig  = ed25519_sign(consumerAuthority, hash)
-          ```
-
-          Send the signature as `authSig` (base58 or `0x` hex) together with `consumerAuthority`, `subscriptionOwner`, and `signaturesRequired`. Because the signed message includes `timestamp`, each signature is **single-use** — retry with a fresh timestamp and new `authSig` on failure.
+          - **No `sourceId` and no timestamp in the request.** The gateway derives the [source ID](/concepts/feeds#source-id) from `apiConfig` and stamps the round on the 100 ms grid ([round timing](/concepts/attestations#round-timing)).
+          - **Duplicates.** A second request from the same consumer for the same source and quorum inside one tick returns `409` with nothing reserved. Retry after one tick with a fresh `authTimestamp`.
+          - **No idempotency key.** A retry is a new round and uses another unit of quota.
+          - **Capacity.** At capacity the gateway answers `503` with `Retry-After` before reading the body; a per-consumer limit answers `429`. Neither spends quota.
 
           ### Validation rules
 
           | Field | Rule |
           | --- | --- |
-          | `timestamp` | Within gateway clock skew (default 300s); part of on-chain replay key |
-          | `registryVersion` | Must match current on-chain registry version |
-          | `apiConfig.url` | Must use `http` or `https` |
-          | `authSig` | Valid 64-byte Ed25519 signature; all-zero signatures rejected |
-          | `encKeyBundle` | Optional for plaintext configs; each node receives only its own envelope entry |
+          | `authSig`, `authTimestamp` | Ed25519 signature by `consumerAuthority` over the RequestAuth digest; `authTimestamp` in unix seconds within `requestAuthWindowSeconds` of the gateway clock. Omit both with a session token. |
+          | `signaturesRequired` | At least the protocol `min_signers`; at most the current node count (`400`) and the subscription's `max_signers` (`403`) |
+          | `registryVersion` | Must equal the current on-chain registry version |
+          | `apiConfig.url` | `http` or `https` |
+          | `apiConfig.method` | `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD` or `OPTIONS` |
+          | `apiConfig.aggregation` | Optional [tolerance mode](/concepts/feeds#exact-and-tolerance-mode): rule `median`, type `int256`, `maxAgeMs` > 0, `signaturesRequired` ≥ 3. `"mode": "exact"` is rejected. |
+          | `encKeyBundle` | Optional encrypted secrets: one envelope per registry node; each selected node receives only its own |
 
-          See the [Gateways guide](/gateways/overview) for settlement lifecycle and round-record PDAs.
+          ### Paywalled sources and providers
+
+          For a source that is itself x402-paywalled, set `x402Source`. The gateway answers `402` with the eligible nodes in `extensions.upstream` and an empty `accepts` (the round itself is covered by the subscription). Resend with one caller-signed authorization per eligible node in `sourcePayments`; they pay the source, never Molpha.
+
+          On an integrated provider's `api_key` host ([`GET /v1/providers`](/gateways/api/providers-list)), Molpha supplies the credential: use a route the provider lists, method `GET`, no headers, and the aggregation it requires. When the provider's call budget is spent the answer is `503` and no quota is used.
       tags:
         - round
+      security:
+        - {}
+        - BearerAuth: []
       requestBody:
         required: true
         description: Round execution request
@@ -117,8 +228,8 @@ paths:
               subscriptionOwner: 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
               consumerAuthority: 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
               signaturesRequired: 3
-              timestamp: 1700100000
               registryVersion: 42
+              authTimestamp: 1700100000
               authSig: 5VERv8NMvzbJMEkV8xnrLkEaWRtSz9ibyvq8CJ7qJqJqJqJqJqJqJqJqJqJqJqJqJqJqJqJqJqJqJqJqJq
               apiConfig:
                 url: https://api.example.com/v1/price
@@ -132,27 +243,44 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/DataUpdateResponse"
+                $ref: "#/components/schemas/AttestationResponse"
         "400":
-          description: Validation failure or stale `registryVersion`
+          description: Validation failure, stale `registryVersion`, or both a session token and `authSig` / `authTimestamp` sent
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
-          description: Missing or invalid `authSig`
+          description: Missing or invalid RequestAuth signature, `authTimestamp` outside the freshness window, or an unknown, expired or revoked session token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "402":
+          description: The API source is paywalled. `accepts` is empty (the round is covered by the subscription) and `extensions.upstream` carries the quote. Nothing is reserved.
+          headers:
+            PAYMENT-REQUIRED:
+              description: Base64 x402 v2 envelope; `extensions.upstream` carries the paid-source quote
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentRequiredResponse"
         "403":
-          description: Subscription inactive, exhausted, or delegate not authorized
+          description: Subscription inactive, delegate not authorized, requested quorum above the subscription's `max_signers`, or the round quota for the current term exhausted
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: Duplicate round identity (`feed_id` + `timestamp` replay)
+          description: Duplicate round identity (this consumer already has a round for this source and quorum in the same 100 ms tick). Nothing was reserved or dispatched. Retry after one tick. No `Retry-After` header.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: This consumer exceeded the gateway's per-consumer request rate. Retry after the `Retry-After` header.
           content:
             application/json:
               schema:
@@ -164,71 +292,209 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
-          description: Node round timeout or upstream failure
+          description: Gateway at its concurrency limit (with `Retry-After`; nothing reserved or spent), too few nodes accepting the round, node round timeout or upstream failure, a transient chain-read or storage failure (with `Retry-After`), or the gateway's sponsored provider access at its call limit
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-  /v1/agent/execute:
-    post:
-      summary: Execute an x402 agent round
-      description: Self-funded pay-per-request round via agent escrow.
+  /v1/session/challenge:
+    get:
+      summary: Get a sign-in challenge
+      description: The terms of a Sign-In-With-X sign-in for an address and the exact text its wallet must sign.
       x-mint:
         metadata:
-          sidebarTitle: Agent execute
+          sidebarTitle: Session challenge
         content: |
-          Runs a pay-per-request signing round for agents without a Molpha subscription. The payer funds a per-gateway escrow ATA, locks an exact USDC `amount`, and signs `AgentRequestAuth`.
+          Returns the terms of a Sign-In-With-X (SIWX) sign-in for `address` and the exact text its wallet must sign. Sign `data.message` as a UTF-8 message (not a transaction) with `address`, then exchange it at [`POST /v1/session`](/gateways/api/session-create).
 
-          <Warning>
-          Requires `agent.enabled: true` in gateway configuration.
-          </Warning>
+          <Note>
+          The session routes are served only when [`GET /v1/info`](/gateways/api/info) reports `sessionAuth: true`. On a gateway without sessions they return `404`, and `RequestAuth` is the only authentication for [`POST /v1/round/execute`](/gateways/api/round-execute).
+          </Note>
 
-          ### Round price
+          `owner` is the subscription owner the session is for. Leave it out when `address` is the owner. A delegate must name its owner.
 
-          `amount` must equal the computed price exactly (USDC atomic units):
+          The message follows the x402 `sign-in-with-x` extension in its Solana (SIWS) form. Its domain and URI are the gateway's configured public origin (`publicOrigin` in `GET /v1/info`), its statement names the Gateway PDA, and its resources name the program, the gateway and the subscription owner. It expires `sessionChallengeTtlSeconds` after it was issued.
 
-          ```text
-          price = agent_round_base + signatures_required × agent_round_per_sig
-          ```
-
-          Values come from on-chain `ProtocolConfig`. The gateway rejects `amount ≠ price` with `400`.
-
-          ### Authentication
-
-          The payer signs `AgentRequestAuth`:
-
-          ```text
-          body = borsh(agent_escrow_pda, gateway_pda, feed_id, canonical_timestamp_le, amount_le)
-          hash = sha256("MOLPHA_AGENT_REQAUTH_V1" || body)
-          sig  = ed25519_sign(payer, hash)
-          ```
-
-          `agent_request_auth_sig` may be omitted on the unfunded first request of the 402 discovery flow.
-
-          ### 402 payment flow
-
-          1. Call execute (signature optional) → receive `402` with x402 envelope.
-          2. Fund `payTo` with at least `maxAmountRequired` USDC.
-          3. Sign `AgentRequestAuth` over the `extra` fields from the response.
-          4. Retry with the **same** `canonical_timestamp` and the signature.
-
-          See [x402 escrow](/access-models/x402) for the full payment loop and settlement details.
+          This call is unauthenticated: it reads no chain state and stores nothing. Whether `address` has access is decided at sign-in.
       tags:
-        - agent
+        - session
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: Base58 public key that will sign in
+          schema:
+            type: string
+            example: 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
+        - name: owner
+          in: query
+          required: false
+          description: Base58 subscription owner; defaults to `address`
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Sign-in challenge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionChallengeResponse"
+        "400":
+          description: "`address` or `owner` is not a base58 public key"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Sessions are not enabled on this gateway
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/session:
+    post:
+      summary: Sign in
+      description: Exchanges a signed sign-in message for a session token.
+      x-mint:
+        metadata:
+          sidebarTitle: Session sign-in
+        content: |
+          Exchanges a signed sign-in message for a session token. Send the x402 `sign-in-with-x` payload, base64-encoded, in the `SIGN-IN-WITH-X` header: the challenge's `info` fields plus `address`, `chainId`, `type` (`ed25519`), `signatureScheme` (`siws`) and the base58 `signature` over the message's UTF-8 bytes.
+
+          <Note>
+          Served only when [`GET /v1/info`](/gateways/api/info) reports `sessionAuth: true`; otherwise this route returns `404`.
+          </Note>
+
+          The gateway checks the message against its own terms (domain, URI, statement, chain, resources, dates), verifies the signature, and only then reads the chain: `address` must be the subscription `owner` with an active subscription, or hold a delegate account under that owner. A message opens at most one session.
+
+          The body is optional. `ttlSeconds` asks for a shorter lifetime than the default (`sessionTtlSeconds`); it may be at most `sessionMaxTtlSeconds`.
+
+          The token is opaque and returned once. Send it as `Authorization: Bearer <token>` on [`POST /v1/round/execute`](/gateways/api/round-execute), with no `authSig` or `authTimestamp`. It expires at `data.expiresAt`, and never later than the subscription's `valid_until`; sign in again for a new one. A session only identifies the caller: subscription and delegate access is checked against chain state (cached for a few seconds) for every round, so removing a delegate or letting the subscription lapse ends what its sessions can do.
+      tags:
+        - session
+      parameters:
+        - name: SIGN-IN-WITH-X
+          in: header
+          required: true
+          description: Base64 JSON sign-in payload
+          schema:
+            type: string
       requestBody:
-        required: true
-        description: Agent round execution request
+        required: false
+        description: Optional shorter lifetime
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AgentExecuteRequest"
+              $ref: "#/components/schemas/SessionSignInRequest"
+      responses:
+        "201":
+          description: Session opened
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "400":
+          description: Missing or malformed `SIGN-IN-WITH-X` header, or `ttlSeconds` out of range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: The message is not this gateway's, has expired, was already used, or its signature does not verify
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: The signer has no active subscription or delegate account under the named owner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Sessions are not enabled on this gateway
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Transient chain-read or storage failure, or too many sign-ins in progress. Retry after the `Retry-After` header with the same message.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      summary: Sign out
+      description: Ends the session the bearer token belongs to.
+      x-mint:
+        metadata:
+          sidebarTitle: Session sign-out
+        content: |
+          Ends the session the bearer token belongs to. It always answers `204`, whether or not the token named a live session, so the response says nothing about which tokens exist.
+
+          <Note>
+          Served only when [`GET /v1/info`](/gateways/api/info) reports `sessionAuth: true`; otherwise this route returns `404`.
+          </Note>
+      tags:
+        - session
+      security:
+        - BearerAuth: []
+      responses:
+        "204":
+          description: Signed out
+        "404":
+          description: Sessions are not enabled on this gateway
+        "503":
+          description: Transient storage failure; retry after the `Retry-After` header
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/x402/execute:
+    post:
+      summary: Execute an x402 pay-per-request round
+      description: x402 v2 exact Solana payment to the protocol treasury; no subscription required.
+      x-mint:
+        metadata:
+          sidebarTitle: x402 execute
+        content: |
+          Runs a round paid by one x402 v2 `exact` USDC payment on Solana, for a caller without a subscription. The payment goes to the protocol treasury, never to the gateway. The full flow, price formula and memo are in [x402 pay-per-request](/access-models/x402).
+
+          1. Send the request without `PAYMENT-SIGNATURE`. The gateway answers `402` with a base64 `PAYMENT-REQUIRED` header and the same x402 v2 object in the body.
+          2. Sign a payment matching the `accepts` entry, including its `extra.feePayer` and exact `extra.memo`.
+          3. Retry the same body with `PAYMENT-SIGNATURE: <base64 payment payload>`.
+          4. The gateway verifies the payment, stamps and dispatches the round, settles the payment and returns `200` with the attestation and a base64 `PAYMENT-RESPONSE` receipt.
+
+          - **Payment is the authorization.** No `RequestAuth`; the payer comes from the verified payment, not the body.
+          - **One payment, one round.** A used payment is refused for another round (`409`).
+          - **Duplicates.** A second request from the same payer for the same source and quorum inside one 100 ms tick returns `409` with nothing reserved; the unused payment stays valid. Retry after one tick.
+          - **Failures.** If the round reaches the nodes and fails, the payment is not settled but cannot be reused: sign a new one. An ambiguous settlement returns `503`; do not pay again automatically.
+          - **Capacity.** At capacity the gateway answers `503` with `Retry-After` before reading the body, so the payment is neither verified nor reserved.
+
+          `apiConfig.aggregation` (tolerance mode), paywalled sources (`x402Source`, `sourcePayments`) and integrated providers work as on [`POST /v1/round/execute`](/gateways/api/round-execute). When a provider's call budget is spent the answer is `503`, the payment is not settled, and the same authorization can be reused.
+      tags:
+        - x402
+      parameters:
+        - name: PAYMENT-SIGNATURE
+          in: header
+          required: false
+          description: Base64 x402 v2 payment payload. Omit on the first request to receive the `402` requirements.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        description: x402 execute request
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/X402ExecuteRequest"
             example:
-              payer: 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
-              canonical_timestamp: 1700100000
               signatures_required: 3
-              amount: 1030
               registry_version: 42
-              agent_request_auth_sig: 5VERv8NMvzbJMEkV8xnrLkEaWRtSz9ibyvq8CJ7qJqJqJqJqJqJqJqJqJqJqJqJqJqJqJqJqJqJqJqJqJq
               apiConfig:
                 url: https://api.example.com/v1/price
                 method: GET
@@ -237,37 +503,35 @@ paths:
                 valueTransform: multiply:1e6
       responses:
         "200":
-          description: Signed payload ready for submission or verification
+          description: Signed aggregate; the payment is confirmed
+          headers:
+            PAYMENT-RESPONSE:
+              description: Base64 x402 v2 settlement receipt
+              schema:
+                type: string
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/DataUpdateResponse"
+                $ref: "#/components/schemas/AttestationResponse"
         "400":
-          description: Validation failure, `amount` mismatch, or stale `registry_version`
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Missing or invalid `agent_request_auth_sig` on a funded request
+          description: Validation failure or stale `registry_version`
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "402":
-          description: Escrow ATA underfunded — returns x402 payment envelope
+          description: Payment missing or rejected, or the API source is paywalled (`extensions.upstream` carries the quote)
+          headers:
+            PAYMENT-REQUIRED:
+              description: Base64 x402 v2 payment requirements
+              schema:
+                type: string
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/PaymentRequiredResponse"
-        "403":
-          description: Escrow paused or payer/authority mismatch
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: Duplicate `canonical_timestamp` for this feed identity
+          description: Duplicate round identity (this payer already has a round for this source and quorum in the same 100 ms tick; nothing was reserved and an unused authorization stays usable; retry after one tick) or the payment authorization was already used for a round. No `Retry-After` header.
           content:
             application/json:
               schema:
@@ -279,75 +543,57 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
-          description: Node round timeout or upstream failure
+          description: x402 or facilitator unavailable, uncertain payment outcome, gateway at its concurrency limit (with `Retry-After`; payment not reserved), too few nodes accepting the round, node round timeout or upstream failure (the authorization is spent unsettled; retry with a new payment), or the gateway's sponsored provider access at its call limit (the payment is not settled and can be reused)
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-  "/v1/agent/{payer}/status":
+  /v1/x402/status:
     get:
-      summary: Advisory agent escrow status
-      description: Escrow balance, committed spend, and quoted next round price.
+      summary: x402 payment destination and quote
+      description: The protocol treasury every x402 payment pays, the next round price, and the gateway's pending tickets.
       x-mint:
         metadata:
-          sidebarTitle: Agent status
+          sidebarTitle: x402 status
         content: |
-          Advisory read of x402 escrow state for one payer at this gateway. The escrow PDA is derived server-side from `(payer, gateway)`.
-
-          <Note>
-          Requires `agent.enabled: true`. Treat balances as advisory until `settle_agent_round` finalizes.
-          </Note>
+          Advisory read of where x402 payments go and what the next round costs. The gateway holds no funds: `payTo` is the protocol treasury (the `ProtocolConfig` PDA) and `treasuryAta` is its USDC associated token account.
 
           ### Query parameters
 
           | Parameter | Default | Purpose |
           | --- | --- | --- |
-          | `signatures_required` | `1` | Quorum used for the `quotedNextPrice` calculation |
+          | `signatures_required` | Protocol `min_signers` | Quorum used for the `quotedNextPrice` calculation |
 
           ### Response notes
 
-          - `exists: false` is normal before the first successful settlement.
-          - USDC amounts (`ataBalance`, `committedAmount`, `quotedNextPrice`) are decimal strings of atomic units.
-          - `unsettledRounds` counts in-flight rounds not yet settled on-chain.
+          - `quotedNextPrice` is a decimal string of USDC atomic units: `x402_round_base + (signatures_required + registry.redundancy_buffer) * reward_per_signature`.
+          - `pendingTickets` counts this gateway's served rounds (subscription and x402) with no final ticket outcome yet: not yet drawn, or sampled and not yet on chain. Drain it before deactivating the gateway.
+          - The quote is advisory. The binding terms are in the `402` response of `POST /v1/x402/execute`.
       tags:
-        - agent
+        - x402
       parameters:
-        - name: payer
-          in: path
-          required: true
-          description: Payer identity (base58 Ed25519 pubkey)
-          schema:
-            type: string
-            example: 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
         - name: signatures_required
           in: query
-          description: Quorum used for the price quote
+          description: Quorum used for the price quote (default protocol `min_signers`)
           schema:
             type: integer
-            default: 1
             example: 3
       responses:
         "200":
-          description: Escrow status
+          description: x402 payment destination and quote
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AgentEscrowStatus"
+                $ref: "#/components/schemas/X402StatusResponse"
               example:
-                payer: 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
                 gateway: GwPDA1111111111111111111111111111111111111
-                escrow: EscrowPDA1111111111111111111111111111111111
-                exists: true
-                authority: 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
-                status: Active
-                ataAddress: Ata1111111111111111111111111111111111111
-                ataExists: true
-                ataBalance: "2060"
-                committedAmount: "1030"
+                authority: GwAuthority11111111111111111111111111111111
+                payTo: ProtocolConfigPDA111111111111111111111111111
+                treasuryAta: TreasuryAta111111111111111111111111111111
                 quotedNextPrice: "1030"
-                unsettledRounds: 1
+                pendingTickets: 1
         "400":
-          description: Invalid payer pubkey
+          description: Invalid or out-of-range `signatures_required`
           content:
             application/json:
               schema:
@@ -358,115 +604,88 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Node directory unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 tags:
   - name: health
     x-group: Health
     description: Liveness probes
+  - name: gateway
+    x-group: Gateway
+    description: Gateway identity and the RequestAuth window
   - name: nodes
     x-group: Nodes
     description: Oracle node discovery
+  - name: providers
+    x-group: Providers
+    description: Integrated data providers
   - name: round
     x-group: Subscription rounds
     description: Subscription and delegate execute path
-  - name: agent
-    x-group: Agent (x402)
-    description: Pay-per-request agent path (requires `agent.enabled`)
+  - name: session
+    x-group: Sessions
+    description: Sign-In-With-X sessions (served when `GET /v1/info` reports `sessionAuth` true)
+  - name: x402
+    x-group: x402 pay-per-request
+    description: Pay-per-request path paid in USDC to the protocol treasury (requires a configured facilitator)
 servers:
   - url: https://dev-gateway.molpha.io
     description: Devnet (SDK default)
 components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Session token from `POST /v1/session`, sent as `Authorization` `Bearer <token>`. Required for `DELETE /v1/session`. On `POST /v1/round/execute` it is optional and replaces RequestAuth (`authSig` and `authTimestamp` in the body).
   schemas:
-    AgentEscrowStatus:
+    AggregationNumeric:
       type: object
-      description: Advisory on-chain escrow state for one payer at this gateway.
+      description: How observed decimals become the signed integer.
       properties:
-        payer:
+        type:
           type: string
-          description: Payer pubkey (base58).
-        gateway:
-          type: string
-          description: Settling gateway PDA (base58).
-        escrow:
-          type: string
-          description: Agent escrow PDA derived from `(payer, gateway)`.
-        exists:
-          type: boolean
-          description: Whether the escrow account has been created on-chain.
-        authority:
-          type: string
-          description: Ed25519 signer authorized to submit agent rounds.
-        status:
-          type: string
-          description: Escrow status (`Active` or `Paused`).
-          example: Active
-        ataAddress:
-          type: string
-          description: USDC associated token account for the escrow PDA.
-        ataExists:
-          type: boolean
-          description: Whether the escrow ATA has been created.
-        ataBalance:
-          type: string
-          description: Total USDC balance in the ATA (atomic units, decimal string).
-          example: "2060"
-        committedAmount:
-          type: string
-          description: USDC reserved by unsettled rounds (atomic units, decimal string).
-          example: "1030"
-        quotedNextPrice:
-          type: string
-          description: Price for the next round at the requested quorum (atomic units).
-          example: "1030"
-        unsettledRounds:
+          enum:
+            - int256
+          example: int256
+        decimals:
           type: integer
-          description: Count of served rounds awaiting on-chain settlement.
-          example: 1
-    AgentExecuteRequest:
+          description: The signed value is scaled by `10^decimals`.
+          example: 8
+    AggregationRequest:
       type: object
-      description: Request body for `POST /v1/agent/execute`. Agent-specific fields use snake_case.
-      required:
-        - payer
-        - canonical_timestamp
-        - signatures_required
-        - amount
-        - registry_version
-        - apiConfig
+      description: Median tolerance policy. Nodes fetch independently, exclude observations more than `maxDeviationBps` from the lower median, and sign the lower median of the surviving values as a signed int256. Requires a quorum of at least 3.
       properties:
-        payer:
+        mode:
           type: string
-          description: Payer Ed25519 identity and on-chain escrow authority (base58 pubkey).
-          example: 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
-        canonical_timestamp:
-          type: integer
-          description: Node round timestamp and on-chain replay key. Must be within gateway clock skew.
-          example: 1700100000
-        signatures_required:
-          type: integer
-          description: Requested quorum for this round.
-          example: 3
-        amount:
-          type: integer
-          description: Locked round price in USDC atomic units. Must equal the computed price exactly.
-          example: 1030
-        registry_version:
-          type: integer
-          description: Active on-chain registry version. Must match the current version.
-          example: 42
-        agent_request_auth_sig:
+          enum:
+            - tolerance
+          example: tolerance
+        rule:
           type: string
-          description: |-
-            Payer Ed25519 signature over `H(AgentRequestAuth)` (base58 or `0x` hex).
-            Omit only on the unfunded first request of the 402 discovery flow.
-        apiConfig:
-          $ref: "#/components/schemas/ApiConfigRequest"
-        encKeyBundle:
-          $ref: "#/components/schemas/EncKeyBundleRequest"
+          enum:
+            - median
+          example: median
+        maxDeviationBps:
+          type: integer
+          description: Largest allowed deviation from the lower median, in basis points.
+          example: 50
+        maxAgeMs:
+          type: integer
+          minimum: 1
+          description: Largest allowed age of an observation, in milliseconds. Must be greater than 0.
+          example: 2000
+        numeric:
+          $ref: "#/components/schemas/AggregationNumeric"
     ApiConfigRequest:
       type: object
-      description: Off-chain HTTP API configuration hashed into the feed identity.
+      description: Off-chain HTTP API configuration. Its canonical hash is the source ID.
       required:
         - url
-        - responseParser
+        - method
       properties:
         url:
           type: string
@@ -474,8 +693,7 @@ components:
           example: https://api.example.com/v1/price
         method:
           type: string
-          description: HTTP method.
-          default: GET
+          description: "HTTP method. Required: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD` or `OPTIONS`. It is hashed into the source ID as sent."
           example: GET
         headers:
           type: object
@@ -491,81 +709,86 @@ components:
           type: string
           description: Optional post-parse transform (e.g. `multiply:1e6`).
           example: multiply:1e6
-    DataUpdate:
+        aggregation:
+          allOf:
+            - $ref: "#/components/schemas/AggregationRequest"
+          description: Selects median tolerance mode. Omit it for exact mode. It is part of the source ID; `"mode":"exact"` is rejected.
+    AttestationResponse:
       type: object
-      description: Threshold-signed oracle result included in successful round responses.
-      properties:
-        feedId:
-          type: string
-          description: Derived feed identity (hex).
-          example: 0xabc123...
-        value:
-          type: string
-          description: Human-readable decoded value.
-          example: "42150125000000"
-        valuePacked:
-          type: string
-          description: 32-byte packed value (hex).
-        timestamp:
-          type: integer
-          description: Canonical round timestamp (seconds).
-          example: 1700100000
-        registryVersion:
-          type: integer
-          description: Registry version active when the round was signed.
-          example: 42
-        signaturesRequired:
-          type: integer
-          description: Quorum required for this feed.
-          example: 3
-        configHash:
-          type: string
-          description: Hash of the committed API configuration.
-        signersBitmap:
-          type: string
-          description: 32-byte big-endian bitmap of participating signers (hex).
-        s:
-          type: string
-          description: 32-byte Schnorr scalar `s` (hex).
-        rx:
-          type: string
-          description: Schnorr commitment x-coordinate (hex).
-        ryParity:
-          type: integer
-          description: Schnorr commitment y parity (`0` or `1`).
-        commitmentAddr:
-          type: string
-          description: 20-byte commitment address (hex).
-        fresh:
-          type: boolean
-          description: Always `true` for live gateway rounds.
-          example: true
-    DataUpdateResponse:
-      type: object
-      description: Successful round response envelope shared by subscription and agent execute paths.
+      description: Successful round response, shared by `POST /v1/round/execute` and `POST /v1/x402/execute`. The attestation payload and Schnorr signature are what verifiers consume.
       properties:
         status:
           type: string
-          description: Round completion status.
           example: completed
         data:
-          $ref: "#/components/schemas/DataUpdate"
+          $ref: "#/components/schemas/AttestationData"
+    AttestationData:
+      type: object
+      properties:
+        attestation:
+          type: object
+          properties:
+            payload:
+              type: object
+              properties:
+                value:
+                  type: string
+                  description: Fixed 32-byte packed value (hex). Unsigned in exact mode, signed int256 in tolerance mode.
+                sourceId:
+                  type: string
+                  description: 32-byte source ID (hex), the canonical API-config hash.
+                registryVersion:
+                  type: integer
+                  example: 42
+                signaturesRequired:
+                  type: integer
+                  example: 3
+                timestamp:
+                  type: integer
+                  description: Gateway-assigned round time in unix milliseconds.
+                  example: 1700100000000
+            signature:
+              type: object
+              properties:
+                signature:
+                  type: string
+                  description: 32-byte aggregate Schnorr scalar (hex).
+                commitment:
+                  type: string
+                  description: 20-byte commitment address (hex).
+                signersBitmap:
+                  type: string
+                  description: 32-byte big-endian bitmap of participating signers (hex).
+        value:
+          type: string
+          description: Decimal rendering of `payload.value` (trailing zeros trimmed).
+          example: "42150125000000"
+        fresh:
+          type: boolean
+          example: true
+        configHash:
+          type: string
+          description: API-config commitment echoed from the node round (currently equal to `sourceId`).
+        aggregation:
+          allOf:
+            - $ref: "#/components/schemas/AggregationRequest"
+          description: Echo of the request's median-tolerance policy; present only in tolerance mode.
     EncKeyBundleRequest:
       type: object
       description: End-to-end encryption envelope for private API configs. Omit for plaintext configs.
       properties:
         ephemeralPub:
           type: string
-          description: Ephemeral X25519 public key used to encrypt the config.
+          description: Ephemeral public key used to encrypt the config (hex).
         nonceSym:
           type: string
-          description: Symmetric encryption nonce.
+          description: Symmetric encryption nonce (12 bytes, hex).
         ciphertext:
           type: string
-          description: Encrypted API configuration payload.
+          description: Encrypted API configuration payload (hex).
         envelopes:
           type: object
-          description: Per-node encrypted key envelopes, keyed by node index.
+          description: Per-node encrypted key envelopes. Keys are decimal node indices as strings; values are hex. Send one for every node in the registry; the gateway forwards each selected node only its own.
           additionalProperties:
             type: string
     ErrorResponse:
@@ -577,32 +800,24 @@ components:
           example: validation failed
     ExecuteRequest:
       type: object
-      description: Request body for `POST /v1/round/execute`.
+      description: Request body for `POST /v1/round/execute`. With RequestAuth, `subscriptionOwner`, `consumerAuthority`, `authSig` and `authTimestamp` are also required. With a session token, omit `authSig` and `authTimestamp`; the two identity fields are optional.
       required:
-        - subscriptionOwner
-        - consumerAuthority
         - signaturesRequired
-        - timestamp
         - registryVersion
-        - authSig
         - apiConfig
       properties:
         subscriptionOwner:
           type: string
-          description: Subscription owner pubkey (base58). Equal to `consumerAuthority` for owner-direct requests.
+          description: Subscription owner pubkey (base58). Equal to `consumerAuthority` for owner-direct requests. Optional with a session token; if sent it must match the session.
           example: 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
         consumerAuthority:
           type: string
-          description: Identity that signs `RequestAuth` and is used to derive `feed_id` (base58).
+          description: "Consumer identity that signs RequestAuth (base58): the subscription owner, or a delegate of it. Optional with a session token; if sent it must match the session."
           example: 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
         signaturesRequired:
           type: integer
-          description: Requested quorum, bounded by the subscription or delegate and current node count.
+          description: "Requested quorum: at least protocol `min_signers`, at most the subscription's `max_signers` (`403` above it) and the current node count."
           example: 3
-        timestamp:
-          type: integer
-          description: Unix timestamp (seconds) used as the on-chain replay key and in `RequestAuth`. Must be within the gateway clock skew window (default 300s).
-          example: 1700100000
         registryVersion:
           type: integer
           description: Active on-chain registry version. Must match the current version.
@@ -610,15 +825,28 @@ components:
         authSig:
           type: string
           description: |-
-            Ed25519 signature (64 bytes, base58 or `0x` hex) over:
-            `sha256("MOLPHA_REQAUTH_V1" || feed_id || uint64_le(timestamp))`.
-            Single-use per timestamp — recompute on every retry.
+            Ed25519 signature (64 bytes, base58 or `0x` hex) by `consumerAuthority` over
+            `keccak256("MOLPHA_REQAUTH_V1" || program_id || gateway_pda || source_id || u8(signaturesRequired) || u64_le(authTimestamp))`,
+            where `source_id` is the canonical apiConfig hash. It only authorizes the request; it is not part of the round.
+            Omit it, and `authTimestamp`, when sending a session bearer token.
+        authTimestamp:
+          type: integer
+          description: Unix time in SECONDS at which `authSig` was signed. Must be within `requestAuthWindowSeconds` (from `GET /v1/info`) of the gateway clock, in either direction. Unrelated to the round's millisecond `timestamp`, which the gateway assigns.
+          example: 1700100000
         apiConfig:
           $ref: "#/components/schemas/ApiConfigRequest"
         encKeyBundle:
           allOf:
             - $ref: "#/components/schemas/EncKeyBundleRequest"
           description: Optional encryption envelope. Send `null` or omit for plaintext configs.
+        sourcePayments:
+          type: array
+          description: Base64 x402 payloads for a paywalled API source, one per node in the round's eligible set. They pay the source, never Molpha.
+          items:
+            type: string
+        x402Source:
+          type: boolean
+          description: Declare a paywalled API source. Without `sourcePayments` the gateway returns the `402` quote instead of running the round.
     HealthResponse:
       type: object
       properties:
@@ -626,6 +854,78 @@ components:
           type: string
           description: Gateway health status.
           example: up
+    InfoData:
+      type: object
+      required:
+        - gatewayAuthority
+        - gatewayPda
+        - programId
+        - requestAuthWindowSeconds
+        - roundTimeoutSeconds
+        - maxInflightRounds
+        - network
+        - sessionAuth
+        - publicOrigin
+        - sessionTtlSeconds
+        - sessionMaxTtlSeconds
+        - sessionChallengeTtlSeconds
+      properties:
+        gatewayAuthority:
+          type: string
+          description: Base58 pubkey of the gateway's signing authority. The Gateway PDA that RequestAuth binds derives from it.
+          example: 6y8h8UJ8sVYvF7bDkAEHmZnNa2PfXrQkHBTqz1w9yQ7E
+        gatewayPda:
+          type: string
+          description: Gateway account, seeds `["molpha_gateway", gatewayAuthority]` under `programId`.
+          example: 4Nd1mYQzS5mQd9a8o3Yw2fGzLZk1h9dJ7R2sZb6xT3Vk
+        programId:
+          type: string
+          description: Molpha program the gateway settles against. Must match the client's program ID.
+          example: MoLPhaXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxX
+        requestAuthWindowSeconds:
+          type: integer
+          description: How far, in seconds and either direction, a RequestAuth `authTimestamp` may differ from the gateway clock.
+          example: 60
+        roundTimeoutSeconds:
+          type: integer
+          description: The longest the gateway waits for a round. A client's request timeout should exceed it.
+          example: 30
+        maxInflightRounds:
+          type: integer
+          description: Rounds the gateway runs at once; further requests wait briefly in a queue and then get `503` with `Retry-After`. Zero means unlimited.
+          example: 200
+        network:
+          type: string
+          description: CAIP-2 id of the Solana cluster this gateway serves, the network of an x402 payment and the chain of a sign-in message.
+          example: solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1
+        sessionAuth:
+          type: boolean
+          description: Whether sign-in sessions are enabled. When false, the `/v1/session` routes are not served and RequestAuth is the only authentication.
+          example: true
+        publicOrigin:
+          type: string
+          description: Origin a sign-in message must be signed for; empty when sessions are disabled.
+          example: https://gateway.molpha.io
+        sessionTtlSeconds:
+          type: integer
+          description: A session's default lifetime in seconds; zero when sessions are disabled.
+          example: 1800
+        sessionMaxTtlSeconds:
+          type: integer
+          description: The longest session lifetime a client may request, in seconds; zero when sessions are disabled.
+          example: 3600
+        sessionChallengeTtlSeconds:
+          type: integer
+          description: How long a sign-in message may be exchanged after it was issued, in seconds; zero when sessions are disabled.
+          example: 300
+    InfoResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          $ref: "#/components/schemas/InfoData"
     NodeResponse:
       type: object
       properties:
@@ -635,13 +935,14 @@ components:
           example: 0
         address:
           type: string
-          description: On-chain node account address.
+          description: libp2p multiaddr of the node, `/ip4/<ip>/tcp/<port>`.
+          example: /ip4/203.0.113.10/tcp/4001
         peerId:
           type: string
           description: libp2p peer ID used for round dispatch.
         signingKey:
           type: string
-          description: On-chain Schnorr signing public key.
+          description: Compressed secp256k1 signing public key (33 bytes, hex).
     NodesData:
       type: object
       properties:
@@ -649,6 +950,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/NodeResponse"
+        registry:
+          $ref: "#/components/schemas/RegistryResponse"
     NodesResponse:
       type: object
       properties:
@@ -657,85 +960,497 @@ components:
           example: ok
         data:
           $ref: "#/components/schemas/NodesData"
-    PaymentExtra:
+    PaymentExtensions:
       type: object
-      description: Fields required to sign `AgentRequestAuth` after a `402` response.
+      description: Non-Molpha payment terms carried beside `accepts`.
       properties:
-        payer:
-          type: string
-          description: Payer pubkey.
-        agent:
-          type: string
-          description: Escrow PDA — the `agent` field in `AgentRequestAuth`.
-        gateway:
-          type: string
-          description: Settling gateway PDA bound into the signed auth.
-        feedId:
-          type: string
-          description: Feed identity derived from `(payer, api_config_hash, signatures_required)`.
-        canonicalTimestamp:
-          type: integer
-          description: Replay key — must match the retried request.
-        amount:
-          type: string
-          description: Locked round price (atomic units, decimal string).
-        currentAtaBalance:
-          type: string
-          description: Current escrow ATA balance before funding.
-        committedAmount:
-          type: string
-          description: USDC already reserved by unsettled prior rounds.
-        note:
-          type: string
-          description: Human-readable funding instructions.
-    PaymentOption:
+        upstream:
+          $ref: "#/components/schemas/UpstreamQuote"
+    PaymentRequirements:
       type: object
+      description: One accepted x402 v2 payment option. The payment must match it exactly.
       properties:
         scheme:
           type: string
-          description: Payment scheme (e.g. `exact`).
+          description: Payment scheme.
           example: exact
         network:
           type: string
-          description: Solana network identifier.
-          example: solana-devnet
-        maxAmountRequired:
+          description: Solana CAIP-2 network identifier.
+          example: solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1
+        amount:
           type: string
-          description: Minimum USDC to fund (atomic units, decimal string).
+          description: "Round price in USDC atomic units (decimal string): `x402_round_base + (signatures_required + registry.redundancy_buffer) * reward_per_signature`."
           example: "1030"
-        payTo:
-          type: string
-          description: Escrow ATA address to fund.
         asset:
           type: string
-          description: USDC mint address.
-        resource:
+          description: USDC mint address from the on-chain `ProtocolConfig`.
+        payTo:
           type: string
-          description: Gateway resource path.
-          example: /v1/agent/execute
-        description:
-          type: string
-          description: Payment description shown to the agent.
+          description: Protocol treasury owner, the `ProtocolConfig` PDA. Never the gateway.
         maxTimeoutSeconds:
           type: integer
-          description: Suggested timeout for completing payment.
+          description: Suggested timeout for completing the payment.
           example: 60
         extra:
-          $ref: "#/components/schemas/PaymentExtra"
+          type: object
+          description: "Facilitator and request binding fields: `feePayer` (the facilitator's fee payer) and `memo` (hex `MOLPHA_X402_REQUEST_V1` commitment to program, gateway, source, quorum and registry version)."
+          additionalProperties:
+            type: string
     PaymentRequiredResponse:
       type: object
-      description: Standard x402 envelope returned when the escrow ATA is underfunded.
+      description: x402 v2 payment requirements, returned with `402` and base64-encoded in the `PAYMENT-REQUIRED` header.
       properties:
         x402Version:
           type: integer
           description: x402 protocol version.
-          example: 1
+          example: 2
         error:
           type: string
-          description: Error message.
-          example: "payment required: escrow ATA underfunded"
+          description: Why payment is required or was rejected.
+        resource:
+          $ref: "#/components/schemas/PaymentResource"
         accepts:
           type: array
-          description: Accepted payment options.
+          description: Accepted Molpha payment options. Empty on `POST /v1/round/execute`, where only the API source requires payment.
           items:
-            $ref: "#/components/schemas/PaymentOption"
+            $ref: "#/components/schemas/PaymentRequirements"
+        extensions:
+          $ref: "#/components/schemas/PaymentExtensions"
+    PaymentResource:
+      type: object
+      properties:
+        url:
+          type: string
+          description: Absolute URL of the request.
+          example: https://dev-gateway.molpha.io/v1/x402/execute
+        description:
+          type: string
+          example: Molpha oracle round
+        mimeType:
+          type: string
+          example: application/json
+    ProviderAggregation:
+      type: object
+      description: The aggregation the provider's feeds require.
+      properties:
+        mode:
+          type: string
+          example: tolerance
+        minSignatures:
+          type: integer
+          example: 3
+        reason:
+          type: string
+    ProviderCredential:
+      type: object
+      description: How an `api_key` flow is authorized.
+      properties:
+        mode:
+          type: string
+          description: "`sponsored`: the gateway holds the key and the caller supplies none."
+          enum:
+            - sponsored
+          example: sponsored
+        header:
+          type: string
+          description: Request header that carries the key.
+          example: x-api-key
+    ProviderDetail:
+      type: object
+      properties:
+        id:
+          type: string
+          example: tickerlayer
+        name:
+          type: string
+          example: TickerLayer
+        description:
+          type: string
+        docsUrl:
+          type: string
+        termsUrl:
+          type: string
+          description: The provider's data licence.
+        disclosure:
+          type: string
+          description: How a value from this provider must be described to its users.
+        aggregation:
+          $ref: "#/components/schemas/ProviderAggregation"
+        operations:
+          type: array
+          description: The provider routes the gateway acts on. Any other route of the provider is an ordinary source and never receives a sponsored credential.
+          items:
+            $ref: "#/components/schemas/ProviderOperation"
+        flows:
+          type: array
+          description: The access flows the gateway can serve now, each with its own host and feeds.
+          items:
+            $ref: "#/components/schemas/ProviderFlow"
+    ProviderFeed:
+      type: object
+      description: A ready-made source. Send `apiConfig` as given; any change changes the `sourceId`.
+      properties:
+        id:
+          type: string
+          example: btcusd
+        title:
+          type: string
+          example: BTC/USD last trade
+        operation:
+          type: string
+          example: crypto.trade_last
+        symbol:
+          type: string
+          example: BTCUSD
+        sourceId:
+          type: string
+          description: Hex keccak256 of the canonical `apiConfig`.
+        apiConfig:
+          $ref: "#/components/schemas/ApiConfigRequest"
+    ProviderFlow:
+      type: object
+      description: One way to access the provider.
+      properties:
+        kind:
+          type: string
+          enum:
+            - api_key
+            - x402
+          example: x402
+        baseUrl:
+          type: string
+          example: https://x402-testnet.tickerlayer.com
+        pathPrefix:
+          type: string
+          description: Present only when the flow has one.
+          example: /v1
+        credential:
+          allOf:
+            - $ref: "#/components/schemas/ProviderCredential"
+          description: Set for the `api_key` flow.
+        x402:
+          allOf:
+            - $ref: "#/components/schemas/ProviderX402"
+          description: Set for the `x402` flow.
+        feeds:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderFeed"
+    ProviderOperation:
+      type: object
+      description: A provider route the gateway acts on.
+      properties:
+        id:
+          type: string
+          example: crypto.trade_last
+        assetClass:
+          type: string
+          example: crypto
+        path:
+          type: string
+          description: Relative to the flow's `baseUrl` and `pathPrefix`; `:symbol` is its parameter.
+          example: /crypto/trade/last/:symbol
+        symbolExample:
+          type: string
+          example: BTCUSD
+    ProviderResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          $ref: "#/components/schemas/ProviderDetail"
+    ProviderSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          example: tickerlayer
+        name:
+          type: string
+          example: TickerLayer
+        description:
+          type: string
+        flows:
+          type: array
+          description: The access flows the gateway can serve now.
+          items:
+            type: string
+            enum:
+              - api_key
+              - x402
+          example:
+            - x402
+        feedCount:
+          type: integer
+          description: Number of distinct feeds across the flows.
+          example: 6
+    ProviderX402:
+      type: object
+      description: The provider's x402 service. The caller pays the provider directly; prices and payee are the provider's own, in its `402` or its catalog.
+      properties:
+        scheme:
+          type: string
+          example: exact
+        version:
+          type: integer
+          example: 2
+        network:
+          type: string
+          example: eip155:84532
+        asset:
+          type: string
+          example: "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+        assetName:
+          type: string
+          example: USDC
+        paymentModes:
+          type: array
+          description: "`per_node` means one payment per eligible node."
+          items:
+            type: string
+            enum:
+              - per_node
+          example:
+            - per_node
+        catalogUrl:
+          type: string
+    ProvidersData:
+      type: object
+      properties:
+        providers:
+          type: array
+          description: Enabled providers. Empty when none is enabled.
+          items:
+            $ref: "#/components/schemas/ProviderSummary"
+    ProvidersResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          $ref: "#/components/schemas/ProvidersData"
+    RegistryResponse:
+      type: object
+      description: Selection policy of the same snapshot as the node list. Always present on a `200` response.
+      properties:
+        version:
+          type: integer
+          description: Current registry version.
+          example: 42
+        nodeCount:
+          type: integer
+          example: 20
+        redundancyBuffer:
+          type: integer
+          example: 2
+    SIWXInfo:
+      type: object
+      description: The sign-in message fields, in the shape of the x402 `sign-in-with-x` extension.
+      properties:
+        domain:
+          type: string
+          example: gateway.molpha.io
+        uri:
+          type: string
+          example: https://gateway.molpha.io/v1/session
+        version:
+          type: string
+          example: "1"
+        statement:
+          type: string
+        nonce:
+          type: string
+          example: 5f3a9c0e7b1d4a26c8e0f1a2b3c4d5e6
+        issuedAt:
+          type: string
+          example: "2026-10-07T12:00:00.000Z"
+        expirationTime:
+          type: string
+          example: "2026-10-07T12:05:00.000Z"
+        resources:
+          type: array
+          items:
+            type: string
+    SIWXSupportedChain:
+      type: object
+      properties:
+        chainId:
+          type: string
+          example: solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1
+        type:
+          type: string
+          example: ed25519
+        signatureScheme:
+          type: string
+          example: siws
+    SessionChallengeData:
+      type: object
+      description: The terms of one sign-in.
+      properties:
+        info:
+          $ref: "#/components/schemas/SIWXInfo"
+        supportedChains:
+          type: array
+          items:
+            $ref: "#/components/schemas/SIWXSupportedChain"
+        address:
+          type: string
+          description: The key that must sign `message`.
+          example: 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
+        owner:
+          type: string
+          description: The subscription owner the session is for; equal to `address` for the owner itself.
+          example: 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
+        chainId:
+          type: string
+          example: solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1
+        message:
+          type: string
+          description: The exact UTF-8 text to sign, with no trailing newline.
+    SessionChallengeResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          $ref: "#/components/schemas/SessionChallengeData"
+    SessionData:
+      type: object
+      description: A new session. The token is returned once and is not recoverable.
+      properties:
+        token:
+          type: string
+          description: "Sent as `Authorization: Bearer <token>` on `POST /v1/round/execute`."
+          example: molpha_sess_2tq1m0Yk3fJmJ1m9c0vX8q7Wb5sZr4nH6uL2pD9aE0g
+        tokenType:
+          type: string
+          example: Bearer
+        sessionId:
+          type: string
+          description: Identifies the session in the gateway's records; it is not a credential.
+          example: 9f2c4e6a8b0d1f3a5c7e9b1d3f5a7c9e
+        authority:
+          type: string
+          description: The key that signed in.
+          example: 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
+        owner:
+          type: string
+          description: The subscription owner the session acts under.
+          example: 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
+        role:
+          type: string
+          description: "`owner` or `delegate`."
+          example: delegate
+        gatewayPda:
+          type: string
+          example: 4Nd1mYQzS5mQd9a8o3Yw2fGzLZk1h9dJ7R2sZb6xT3Vk
+        programId:
+          type: string
+          example: MoLPhaXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxX
+        issuedAt:
+          type: integer
+          description: Unix seconds.
+          example: 1791374400
+        expiresAt:
+          type: integer
+          description: Unix seconds.
+          example: 1791376200
+    SessionResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          $ref: "#/components/schemas/SessionData"
+    SessionSignInRequest:
+      type: object
+      description: Optional body of `POST /v1/session`.
+      properties:
+        ttlSeconds:
+          type: integer
+          description: Asks for a shorter session than the default; at most `sessionMaxTtlSeconds` from `GET /v1/info`. Omit it for the default lifetime.
+          example: 900
+    UpstreamQuote:
+      type: object
+      description: Quote for a paywalled API source. The caller pays the source directly, one authorization per eligible node.
+      properties:
+        provider:
+          type: string
+          description: ID of the integrated provider whose x402 host the source is on. Present only for such a source.
+        resource:
+          type: string
+          description: The source URL.
+        signaturesRequired:
+          type: integer
+        redundancyBuffer:
+          type: integer
+        nodeCount:
+          type: integer
+        eligibleSetSize:
+          type: integer
+          description: Number of source authorizations to sign.
+        supportedX402Versions:
+          type: array
+          items:
+            type: integer
+        error:
+          type: string
+          description: The source's own response when it was paywalled without being declared.
+    X402ExecuteRequest:
+      type: object
+      description: Request body for `POST /v1/x402/execute`. It carries no timestamp and no payer, amount, signature or payment reference; payment is in `PAYMENT-SIGNATURE`.
+      required:
+        - signatures_required
+        - registry_version
+        - apiConfig
+      properties:
+        signatures_required:
+          type: integer
+          description: Requested quorum for this round. Must be at least protocol `min_signers` and at most the current node count.
+          example: 3
+        registry_version:
+          type: integer
+          description: Active on-chain registry version. Must match the current version.
+          example: 42
+        apiConfig:
+          $ref: "#/components/schemas/ApiConfigRequest"
+        encKeyBundle:
+          $ref: "#/components/schemas/EncKeyBundleRequest"
+        sourcePayments:
+          type: array
+          description: Base64 x402 payloads for a paywalled API source, one per node in the round's eligible set. They pay the source, never Molpha.
+          items:
+            type: string
+        x402Source:
+          type: boolean
+          description: Declare a paywalled API source to be quoted in `extensions.upstream` before running the round.
+    X402StatusResponse:
+      type: object
+      description: Where x402 payments go and what the next round costs.
+      properties:
+        gateway:
+          type: string
+          description: Gateway PDA (base58).
+        authority:
+          type: string
+          description: Gateway authority public key (base58).
+        payTo:
+          type: string
+          description: Protocol treasury owner, the `ProtocolConfig` PDA (base58). The x402 payee.
+        treasuryAta:
+          type: string
+          description: USDC associated token account of the protocol treasury.
+        quotedNextPrice:
+          type: string
+          description: Price of the next round at the requested quorum (USDC atomic units, decimal string).
+          example: "1030"
+        pendingTickets:
+          type: integer
+          description: This gateway's served rounds with no final ticket outcome yet.
+          example: 1

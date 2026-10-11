@@ -1,65 +1,91 @@
 ---
-title: "Quickstart: Smart Contracts"
-description: "Verify a Molpha payload in EVM, Solana, or Starknet applications."
+title: "Quickstart: Smart contracts"
+sidebarTitle: "Smart contracts"
+description: "Consume a Molpha attestation from a contract on EVM, Starknet or Solana."
 icon: "file-contract"
 ---
 
-Smart contracts consume Molpha by verifying a self-contained signed payload. You do not need to run a node, trust a relayer, or maintain a per-chain feed contract.
+Your contract receives an **attestation** (a signed payload plus one aggregate signature) and checks it on-chain. You don't run a node, trust a relayer, or deploy a feed contract per chain. The same attestation works on every chain below.
 
-## What your contract receives
+<Tabs>
+  <Tab title="EVM">
+    Install the interface with Foundry:
 
-Every chain receives the same logical artifact:
+    ```sh
+    forge install molpha/evm-verifier
+    echo "@molpha/evm-verifier/=lib/evm-verifier/src/" >> remappings.txt
+    ```
 
-- `DataUpdate` — `feedId`, `registryVersion`, `signaturesRequired`, `value`, `canonicalTimestamp`
-- `SchnorrSignature` — aggregate scalar, commitment, and `signersBitmap`
+    Call `verify` and apply your own policy:
 
-The payload proves that the selected Molpha node quorum signed exactly that data. Your contract still enforces freshness, replay policy, and feed identity.
+    ```solidity
+    import {IVerifier} from "@molpha/evm-verifier/interfaces/IVerifier.sol";
 
-## EVM
+    error NotVerified(uint8 code);
 
-```solidity
-require(verifier.verify(update, sig), "Molpha: invalid signature");
-require(block.timestamp - update.canonicalTimestamp <= 60, "Molpha: stale");
-require(update.feedId == EXPECTED_FEED_ID, "Molpha: wrong feed");
+    function settle(IVerifier.Attestation calldata att) external {
+        (bool ok, uint8 code) = VERIFIER.verify(att, 60); // maxAge in seconds
+        if (!ok) revert NotVerified(code);
+        require(att.payload.sourceId == EXPECTED_SOURCE_ID, "wrong source");
+        require(att.payload.signaturesRequired >= MIN_SIGNATURES, "threshold too low");
+        // guard replay, then decode att.payload.value
+    }
+    ```
 
-_useValue(update.value);
+    `verify` returns `(false, code)` instead of reverting, so always check `ok`. Full guide, consumer library and result codes: [Verify on EVM](/verifiers/evm).
+  </Tab>
+
+  <Tab title="Starknet">
+    Call the Cairo verifier through its dispatcher:
+
+    ```cairo
+    use verifier::interface::{Attestation, IVerifierDispatcher, IVerifierDispatcherTrait};
+
+    let (ok, _code) = IVerifierDispatcher { contract_address: verifier }.verify(attestation, 60);
+    assert(ok, 'molpha: not verified');
+    assert(attestation.payload.source_id == EXPECTED_SOURCE, 'molpha: wrong source');
+    assert(attestation.payload.signatures_required >= MIN_SIGNATURES, 'molpha: low threshold');
+    ```
+
+    Full guide: [Verify on Starknet](/verifiers/starknet).
+  </Tab>
+
+  <Tab title="Solana">
+    Read the latest value from a `Feed` account that a submitter keeps up to date, after checking its address:
+
+    ```rust
+    #[account(
+        seeds = [b"molpha_feed", source_id.as_ref(), &[signatures_required], submitter.as_ref()],
+        bump,
+        seeds::program = MOLPHA_PROGRAM_ID,
+    )]
+    pub molpha_feed: AccountInfo<'info>,
+    ```
+
+    Or verify an attestation directly in your program with the `molpha-verifier` crate. Both patterns, with a staleness guard: [Verify on Solana](/verifiers/solana).
+  </Tab>
+</Tabs>
+
+## Get an attestation to test with
+
+Request one from a backend with the [SDK](/quickstarts/backend) or from an agent with [MCP](/quickstarts/ai-agents). The SDK builds the calldata for you:
+
+```ts
+import { buildEvmVerifierArgs, buildStarknetVerifierArgs } from "@molpha/sdk";
+
+const evmArgs = buildEvmVerifierArgs(attestation, { maxAge: 60 });
+const starknetArgs = buildStarknetVerifierArgs(attestation, { maxAge: 60 });
 ```
 
-Full guide: [Verify on EVM](/guides/verify-on-evm).
+Verifier addresses for each network are on [Deployments](/verifiers/deployments).
 
-## Solana
+## Before you ship
 
-Use one of two patterns:
+Verification proves that enough selected nodes signed this exact payload. Your contract still owns the rest:
 
-1. Read the latest maintained `Feed` account for low-latency consumption.
-2. Verify a fresh payload directly with the `molpha-verifier` Rust crate when the decision needs point-in-time proof.
+- Pin the `sourceId` you expect and require a **minimum** `signaturesRequired`.
+- Enforce freshness: a non-zero `maxAge` on EVM and Starknet, or compare `timestamp / 1000` with the chain clock.
+- Reject replays when an old attestation could be submitted twice.
+- Decode `value` with the source's encoding and bound-check it.
 
-Full guide: [Read and Verify on Solana](/guides/read-and-verify).
-
-## Starknet
-
-Use the Cairo verifier with the same signed payload. The SDK can build Starknet-ready arguments from a gateway result.
-
-Full guide: [Verify on Starknet](/guides/verify-on-starknet).
-
-## Consumer checklist
-
-- Verify the payload before using the value.
-- Check `feedId` against the feed you intended to consume.
-- Enforce `canonicalTimestamp` freshness.
-- Track consumed payloads if replay matters.
-- Decode `value` according to the feed schema.
-
-## Next steps
-
-<CardGroup cols={3}>
-  <Card title="EVM verifier" icon="ethereum" href="/verifiers/evm">
-    Solidity structs, registry layout, and gas notes.
-  </Card>
-  <Card title="Solana verifier" icon="sun" href="/verifiers/solana">
-    Feed PDA layout, `submit_data_update`, and direct Rust verification.
-  </Card>
-  <Card title="Payload schema" icon="brackets-curly" href="/reference/payload-schema">
-    Field-level reference for the signed artifact.
-  </Card>
-</CardGroup>
+The full list is the [consumer checklist](/verifiers/overview#consumer-checklist).

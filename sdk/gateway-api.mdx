@@ -1,91 +1,134 @@
 ---
 title: "Gateway client"
-description: "Run signing rounds and retrieve ready-to-submit payloads — via the SDK gateway client or the HTTP gateway directly."
+description: "Run signing rounds with sdk.gateway: requestSignedData, prepareContext, requestAndSubmit, private and paywalled sources, retries and errors."
 ---
 
-The gateway accepts an execution request for a feed, dispatches a signing round to the deterministically selected node set for the current registry version, and returns a completed [`DataUpdateResult`](/sdk/reference#dataupdateresult) — a payload ready to submit to any chain's verifier. The **recommended access path is the SDK gateway client** (`sdk.gateway`), which handles auth, optional context reuse, and struct assembly.
+`sdk.gateway` is a `MolphaGateway`: it signs the request, runs a round on a Molpha gateway and returns an [`Attestation`](/sdk/reference#attestation). This page covers its methods and retry behaviour; for the HTTP API, auth digest and error codes, see [gateways](/gateways/overview).
 
-For raw HTTP integration, use the [Gateway HTTP API](/gateways/api/round-execute) (OpenAPI reference with interactive playground).
+<Warning>
+The gateway response is unverified. The SDK checks that the response matches what you asked for (`sourceId`, `signaturesRequired`, `aggregation`) but does not check the aggregate signature. Verify the attestation before you act on its value: submit it to Solana, or call the [EVM](/verifiers/evm), [Starknet](/verifiers/starknet) or [Solana](/verifiers/solana) verifier.
+</Warning>
 
-## Base URLs
+## Endpoints
 
-| Environment | URL |
-| --- | --- |
-| Devnet (SDK default) | `https://dev-gateway.molpha.io` |
+The client posts to its endpoints in order and moves to the next one on any retryable failure (see [retries and errors](/sdk/gateway-api#retries-and-errors)). The default is `DEFAULT_GATEWAY_ENDPOINT`, `https://dev-gateway.molpha.io/` (devnet).
 
-Also exported as `DEFAULT_GATEWAY_ENDPOINT` from `@molpha/sdk`.
+```ts
+const sdk = new MolphaSDK({
+  connection,
+  wallet,
+  endpoints: [DEFAULT_GATEWAY_ENDPOINT, { url: "https://gateway-2.example", gatewayAuthority: "<base58>" }],
+});
+```
+
+The request signature binds the gateway's on-chain account, so the client needs each gateway's authority key. When you omit `gatewayAuthority`, the client reads it once per endpoint from `GET /v1/info` and throws if the gateway reports a different `programId`.
 
 ## `requestSignedData`
 
 ```ts
 const result = await sdk.gateway.requestSignedData({
-  feedId,
-  apiConfig,
-  signaturesRequired,
+  apiConfig: { url: "https://api.example.com/price", responseParser: "$.price" },
+  signaturesRequired: 3,
 });
 ```
 
-Runs a live round against the current on-chain registry version and resolves with a [`DataUpdateResult`](/sdk/reference#dataupdateresult). The SDK may take `feedId` for local context, but the HTTP gateway **derives** feed identity from `(consumerAuthority|payer, apiConfig, signaturesRequired)` and never trusts a client-supplied feed id. Live gateway rounds return `fresh: true`.
+For each call the SDK:
 
-Under the hood this calls [`POST /v1/round/execute`](/gateways/api/round-execute) for subscription-backed access, or [`POST /v1/agent/execute`](/gateways/api/agent-execute) for x402 agent access.
+1. Canonicalizes `apiConfig` and derives its `sourceId` (see [feeds](/concepts/feeds)). An invalid `aggregation`, or tolerance mode with `signaturesRequired < 3`, throws `AggregationConfigError` before any request.
+2. Reads the current registry version, redundancy buffer and node count from Solana, unless you pass a [`context`](/sdk/gateway-api#preparecontext).
+3. Signs `RequestAuth` with a fresh `authTimestamp` for each attempt and endpoint, and posts to `POST /v1/round/execute`.
+4. Rejects a response whose `sourceId`, `signaturesRequired` or `aggregation` differs from the request, or that lacks a signed field.
 
-Execution is authenticated with an `authSig` produced by the wallet's `signAuthMessage` (or derived from a keypair-backed `Wallet.payer`). The gateway requires a valid 64-byte Ed25519 `authSig` — all-zero signatures are rejected.
+The gateway assigns the round's `timestamp` (unix milliseconds); you never send one. How rounds are timed and shared between callers is described in [round timing](/concepts/attestations#round-timing). All options are listed in [`RequestSignedDataOptions`](/sdk/reference#requestsigneddataoptions). The ones you set most often:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `subscriptionOwner` | wallet public key | Subscription that pays for the round. |
+| `consumerAuthority` | `subscriptionOwner` | The caller: the owner or one of its [delegates](/access-models/delegates). |
+| `maxAge` | `60` | Maximum accepted value age, in seconds, sent to the gateway. |
+| `maxRetries` | `6` | Maximum attempts. See [retries and errors](/sdk/gateway-api#retries-and-errors). |
+| `timeoutMs` | `35000` | Per-request timeout. Keep it above the gateway's round wait, or a retry starts a second round. |
+| `context` | none | Cached registry inputs from [`prepareContext`](/sdk/gateway-api#preparecontext). |
 
 ### Private APIs
 
+Put secrets in the URL or headers as `{{secret.<name>}}` placeholders and pass their values in `encrypt.secrets`:
+
 ```ts
 const result = await sdk.gateway.requestSignedData({
-  feedId,
   apiConfig: {
     url: "https://api.example.com/private-price?key={{secret.apiKey}}",
     responseParser: "$.price",
   },
-  signaturesRequired,
-  encrypt: {
-    secrets: { apiKey: process.env.API_KEY! },
-  },
+  signaturesRequired: 3,
+  encrypt: { secrets: { apiKey: process.env.API_KEY! } },
 });
 ```
 
-`MolphaSDK` wires `verifyNodeKeys` to `solana.verifyNodeKeysForPrivateApi`, which checks gateway node encryption keys against on-chain Node accounts before secrets are encrypted.
+The SDK encrypts the secrets for every node of the registry version, because the committee is not known until the gateway stamps the round. Before encrypting, `MolphaSDK` checks the gateway's node keys against the on-chain `Node` accounts (`solana.verifyNodeKeysForPrivateApi`). A standalone `MolphaGateway` throws unless you pass `verifyNodeKeys` or set the unsafe `allowUnverifiedNodeKeysForPrivateApi`. The `sourceId` is derived from the config with its placeholders, never from the secret values.
+
+### Paywalled API sources
+
+When the API source itself answers HTTP 402 (x402), pass `sourcePayment` to pay it from your own EVM wallet:
+
+```ts
+import { createEvmSignerFromPrivateKey } from "@molpha/sdk";
+
+const result = await sdk.gateway.requestSignedData({
+  apiConfig,
+  signaturesRequired: 3,
+  sourcePayment: { signer: createEvmSignerFromPrivateKey(process.env.SOURCE_PAYER_KEY!) },
+});
+```
+
+The SDK reads the source's 402 terms and signs one authorization per node in the round's eligible set, `min(signaturesRequired + redundancyBuffer, nodeCount)`. Only authorizations a node spends settle. Payment goes to the source, not to Molpha, and the round still costs one unit of subscription quota. The SDK signs `exact` USDC payments on Base and Base Sepolia only. Without `sourcePayment`, a paywalled source throws `UpstreamPaymentRequiredError` with the gateway's `quote`.
+
+This is separate from paying Molpha per request with [x402](/access-models/x402). The SDK does not wrap the x402 pay-per-request endpoint; call it over HTTP as described there.
 
 ## `prepareContext`
 
 ```ts
-const context = await sdk.gateway.prepareContext(feedId);
+const context = await sdk.gateway.prepareContext();
 
-const result = await sdk.gateway.requestSignedData({
-  feedId,
-  apiConfig,
-  signaturesRequired,
-  context,
-});
-```
-
-Fetches registry version, redundancy buffer, and the node set (via [`GET /v1/nodes`](/gateways/api/nodes)), and returns a [`RoundContext`](/sdk/reference#roundcontext). Pass it back via `context` to skip those prelude fetches on subsequent rounds. There is no automatic client-side cache — reuse is explicit.
-
-## Response shape
-
-The flat `DataUpdateResult` maps 1:1 onto every chain's verifier structs via [`buildEvmVerifierArgs` / `buildStarknetVerifierArgs`](/sdk/reference), or directly into Solana's `SubmitDataUpdateArgs`:
-
-```ts
-{
-  feedId: string;
-  value: string;            // human-readable value
-  valuePacked: string;      // 32-byte packed value, hex
-  timestamp: number;        // canonicalTimestamp (seconds)
-  registryVersion: number;
-  signaturesRequired: number;
-  signersBitmap: string;    // 32-byte big-endian bitmap, hex
-  s: string;                // 32-byte Schnorr scalar, hex
-  commitmentAddr: string;   // 20-byte commitment address, hex
-  fresh: boolean;           // true for live gateway rounds
+for (const apiConfig of configs) {
+  await sdk.gateway.requestSignedData({ apiConfig, signaturesRequired: 3, context });
 }
 ```
 
-## HTTP gateway notes
+Reads the registry version, redundancy buffer and node count from Solana and the node list from `GET /v1/nodes`, in parallel, and returns a [`RoundContext`](/sdk/reference#roundcontext). With a full context, each `requestSignedData` is a single POST. Nothing is cached automatically. If the gateway reports that the context's registry version is no longer current, the call re-reads the registry once and retries without spending an attempt; still refresh a long-lived context when the registry version changes.
 
-- **Authentication:** subscription rounds use `authSig` over `RequestAuth`; agent rounds use `agent_request_auth_sig` over `AgentRequestAuth`. See the [Gateways guide](/gateways/overview) for hash definitions.
-- **Freshness:** live execute responses set `fresh: true`. To read a previously submitted Solana value without a new round, [read the `Feed` account](/guides/read-and-verify).
-- **Registry:** pass `prepareContext(feedId)` result as `context` to reuse registry version, redundancy buffer, and nodes across rounds.
-- **Agent status:** [`GET /v1/agent/{payer}/status`](/gateways/api/agent-status) returns advisory escrow state for x402 flows.
+## `requestAndSubmit`
+
+```ts
+const { result, signature, feed } = await sdk.requestAndSubmit({ apiConfig, signaturesRequired: 3 });
+```
+
+Calls `requestSignedData` with the same options, then `sdk.solana.submitAttestation(result)`, which verifies the signature on-chain and writes the submitter's `Feed` account. If the round succeeds but the submit fails, it throws `SubmitFailedError`. The round is already paid for, so resubmit `error.result` instead of requesting a new one:
+
+```ts
+import { SubmitFailedError } from "@molpha/sdk";
+
+try {
+  await sdk.requestAndSubmit({ apiConfig, signaturesRequired: 3 });
+} catch (err) {
+  if (!(err instanceof SubmitFailedError)) throw err;
+  await sdk.solana.submitAttestation(err.result);
+}
+```
+
+To update many feeds, use [`requestMany`](/sdk/reference#requestmany).
+
+## Retries and errors
+
+`requestSignedData` makes up to `maxRetries` attempts and throws the last error when they run out. Each attempt tries every endpoint in order. There is no idempotency key: every attempt the gateway accepts is a new round that spends another unit of quota.
+
+| Gateway answer | SDK behaviour |
+|---|---|
+| HTTP 409 | You already have a round for this source and quorum in the current tick. Tries the next endpoint, then retries after one tick (`ROUND_TICK_MS`, 100 ms) plus up to 20 ms of jitter. |
+| HTTP 503 or 429 | Gateway at capacity, too few nodes accepted, or rate limited. Tries the next endpoint, then waits the later of `Retry-After` and the backoff step (250 ms doubling to 5 s), plus jitter. |
+| HTTP 400, registry version not current | Re-reads the registry once and retries immediately, without spending an attempt. |
+| HTTP 400, 401 or 403 | Throws `GatewayError` with `status` at once. 403 means the subscription is inactive or its round quota is spent. |
+| HTTP 402 | Paywalled source. Signs source payments and retries if `sourcePayment` is set; otherwise throws `UpstreamPaymentRequiredError`. |
+| Timeout, network error, other 5xx | Tries the next endpoint, then waits the backoff step (half randomized). |
+
+`retryDelayMs(cause, failures)` exposes the delay calculation. Error classes are listed in [errors](/sdk/reference#errors).

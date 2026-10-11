@@ -1,119 +1,81 @@
 ---
-title: "x402 Escrow"
-description: "Pay-per-request agent access: HTTP 402 payment loop plus on-chain AgentEscrow settlement."
-icon: "credit-card"
+title: "x402 pay-per-request"
+sidebarTitle: "x402 pay-per-request"
+description: "Pay for one round with one x402 USDC payment to the protocol treasury. No subscription, no escrow."
 ---
 
-**x402 escrow** is the pay-per-request option for AI agents. There is no monthly subscription: the agent (or funder) deposits USDC into a per-gateway escrow ATA, the gateway returns a standard `402 Payment Required` envelope when the balance is short, and settlement debits the escrow after a successful round.
+With **x402**, the caller pays for each round as it asks for it: one standard x402 v2 `exact` USDC payment on Solana authorizes exactly one round. There is no subscription, no escrow account and no request signature beyond the payment itself. It suits AI agents and one-off consumers.
 
-<Note>
-**x402** (HTTP) and **AgentEscrow** (Solana PDA + ATA) are one product. Docs previously listed them as separate models; use this page for both.
-</Note>
-
-This is the alternative to [Delegates](/access-models/delegates). Use x402 escrow when the agent should pay only for the rounds it runs.
-
-## Use x402 escrow when
-
-- An agent needs verified data without a Molpha subscription.
-- Payment should be exact USDC per round, priced by quorum.
-- The agent can handle `402` envelopes and fund an escrow ATA.
-- You want settlement through `settle_agent_round`.
-
-## On-chain escrow
-
-```rust
-#[account]
-pub struct AgentEscrow {
-    pub authority: Pubkey,   // Ed25519 signer of AgentRequestAuth
-    pub status: AgentStatus, // Active | Paused
-    pub bump: u8,
-}
-```
-
-Seeds:
-
-```text
-["molpha_agent", authority, gateway]
-```
-
-USDC sits in `ATA(escrow PDA, USDC)`. The escrow account is created lazily on the first successful `settle_agent_round`.
-
-In the common x402 loop, payer and authority are the same key:
-
-```text
-authority == payer
-ATA(PDA(["molpha_agent", payer, gateway]), USDC)
-```
-
-Anyone can fund the ATA; only `authority` can authorize requests.
+The easiest way to use it is through MCP: [hosted](/mcp/hosted#pay-per-request-x402) or [local](/mcp/local). This page describes the protocol underneath.
 
 ## Flow
 
-1. Agent calls `POST /v1/agent/execute` with exact `amount` equal to the computed round price.
-2. Gateway checks escrow ATA balance (minus reserved unsettled spend).
-3. If underfunded, gateway returns a standard x402 `402 Payment Required` envelope with `payTo` = escrow ATA.
-4. Payer sends USDC to `payTo`, signs `AgentRequestAuth`, and retries with the **same** `canonical_timestamp`.
-5. Gateway serves the round and records it in the settlement outbox.
-6. `settle_agent_round` verifies `AgentRequestAuth`, transfers the locked price to the treasury, and writes an agent round-record PDA.
-
-Maintaining a public Solana `Feed` still requires a separate permissionless `submit_data_update`.
-
-## Request authentication
-
-The escrow `authority` signs:
-
-```text
-sha256(
-  "MOLPHA_AGENT_REQAUTH_V1" ||
-  borsh(AgentRequestAuth{
-    agent,                 // escrow PDA
-    gateway,               // gateway PDA
-    feed_id,
-    canonical_timestamp,   // u64
-    amount                 // exact settlement price
-  })
-)
+```mermaid
+sequenceDiagram
+    participant C as Caller
+    participant G as Gateway
+    participant F as Facilitator
+    participant N as Nodes
+    C->>G: POST /v1/x402/execute (no payment)
+    G-->>C: 402 + PAYMENT-REQUIRED (price, payTo, memo, feePayer)
+    C->>G: same request + PAYMENT-SIGNATURE
+    G->>F: verify payment
+    G->>N: dispatch round (gateway assigns timestamp)
+    N-->>G: aggregate signature
+    G->>F: settle payment
+    G-->>C: 200 attestation + PAYMENT-RESPONSE receipt
 ```
 
-`amount` must equal:
+1. Send `POST /v1/x402/execute` with `signatures_required`, `registry_version` and `apiConfig`, without a payment header.
+2. The gateway answers `402 Payment Required` with a base64 `PAYMENT-REQUIRED` header and the same object in the body. Its `accepts` entry gives the scheme `exact`, the Solana network, the amount, the USDC mint, `payTo`, `extra.feePayer` and `extra.memo`.
+3. Sign a payment that matches that entry exactly and retry the same body with `PAYMENT-SIGNATURE: <base64 payment payload>`.
+4. The gateway verifies the payment through its facilitator **before** dispatching the round, then settles it and returns the attestation with a `PAYMENT-RESPONSE` receipt.
+
+Request and response schemas are in the [HTTP API reference](/gateways/api/x402-execute).
+
+## Price and payee
 
 ```text
-price = agent_round_base + signatures_required * agent_round_per_sig
+price = x402_round_base + (signatures_required + redundancy_buffer) × reward_per_signature
 ```
 
-from `ProtocolConfig`. The gateway rejects any request where `amount ≠ price` (`400`, mirroring on-chain `AmountMismatch`).
+The amount is in USDC base units. `x402_round_base` and `reward_per_signature` come from the on-chain `ProtocolConfig`, and `redundancy_buffer` from the current registry, so the whole selected group is paid for. `GET /v1/x402/status` returns a quote.
 
-Replay protection is the unique agent round-record PDA:
+`payTo` is the **protocol treasury**: the `ProtocolConfig` PDA, whose USDC token account receives the payment. It is never the gateway, and the gateway takes no fee. Treasury income is later swept into the epoch reward pool for nodes.
+
+## Payment memo
+
+`extra.memo` is the hex of:
 
 ```text
-["molpha_agent_round", authority, gateway, api_config_hash, signatures_required, canonical_timestamp_le]
+keccak256("MOLPHA_X402_REQUEST_V1" || program_id || gateway_pda || source_id
+          || u8(signatures_required) || u32_be(registry_version))
 ```
 
-## Failure handling
+It binds the payment to the program, the gateway, the source, the quorum and the registry version. It does not name a round, because the gateway assigns the round's timestamp only after it has verified the payment. Sign exactly the memo and fee payer the gateway advertised.
+
+## Retries and failures
+
+- **One payment, one round.** A payment is recorded once used; replaying it is rejected.
+- **No idempotency key.** A retried request is a new round and needs a new payment once the first one has been used.
+- **`409` costs nothing.** You already have a round for this source and quorum in the current 100 ms tick, or this payment already reserved a round. Nothing is reserved and an unused payment stays usable. Retry after one tick. See [round timing](/concepts/attestations#round-timing).
+- **`503` at capacity costs nothing.** When the gateway is at capacity it refuses before reading the request.
+- **A failed round is not charged, but the payment is used.** If the round reaches the nodes and fails, the payment is not settled, but the gateway will not accept it again. Sign a new payment to retry.
+- **An unclear outcome is not a reason to pay again.** After an ambiguous `5xx` or a dropped connection, check your USDC account for the payment's memo before paying for the round again.
 
 | Status | Meaning |
 | --- | --- |
-| `402` | Escrow ATA balance is below reserved unsettled amount plus quoted price |
-| `400` | Validation failure, including `amount` ≠ price or stale `registry_version` |
-| `401` | Missing or invalid `agent_request_auth_sig` on a funded request |
-| `403` | Escrow paused or payer/authority mismatch |
-| `409` | Duplicate `canonical_timestamp` for this feed identity |
-| `503` | Node round timed out or selected nodes failed to reach quorum |
+| `402` | Payment missing or rejected (inspect `PAYMENT-REQUIRED`), or the source itself is paywalled (`extensions.upstream`) |
+| `400` | Invalid request, including a stale `registry_version` or an out-of-range quorum |
+| `409` | Duplicate round in this tick, or payment already used for a round |
+| `503` | Gateway at capacity, too few nodes accepted, round timeout, or payment outcome uncertain |
 
-## vs Delegate
+## Paywalled API sources
 
-| | x402 escrow | Delegate |
-| --- | --- | --- |
-| Requires subscription | No | Yes |
-| Payment | Escrow ATA USDC | Prepaid plan |
-| Gateway | `/v1/agent/execute` | `/v1/round/execute` |
-| Settlement ix | `settle_agent_round` | `settle_round_receipt` |
+An API source can itself charge over x402. In that case the caller pays the source directly: request a quote with `x402Source`, then send one caller-signed authorization per eligible node in `sourcePayments`. Those payments go to the source, never to Molpha, and the round payment above is unchanged. Sources of an [integrated provider](/gateways/api/providers-list) are quoted the same way. Details are in the [HTTP API reference](/gateways/api/x402-execute).
 
-Full HTTP schema: [Execute an x402 agent round](/gateways/api/agent-execute).
+## Trust
 
-## Security notes
+The gateway verifies and settles payments through a trusted x402 facilitator and never accepts a caller-supplied payer ID as evidence. A `200` response proves neither on-chain settlement nor a valid signature: verify the attestation before you use it.
 
-- Retry the identical request after payment (same `canonical_timestamp`).
-- Treat gateway balance views as advisory until settlement finalizes.
-- Verify the returned signed payload before application use.
-- Enforce freshness on `canonicalTimestamp`.
+To compare x402 with subscriptions and delegates, see [Access and payments](/access-models/overview).

@@ -1,101 +1,109 @@
 ---
 title: "Cryptography"
-description: "PoP-Schnorr aggregation over secp256k1, deterministic node selection, and the domain-separated hashing shared by every verifier."
+description: "Plain-sum Schnorr aggregation over secp256k1, proof of possession, deterministic node selection and the domain separators."
 ---
 
-This is the authoritative reference for Molpha's signing math: how a round is signed, how the eligible signer set is derived, and how every chain's verifier checks the result identically. The per-chain implementations ([Solana](/verifiers/solana), [EVM](/verifiers/evm), [Starknet](/verifiers/starknet)) all reproduce exactly what is described here.
+This is the reference for Molpha's signing math: how the eligible signer set is derived, how signatures aggregate, and the exact pipeline every verifier runs. The [Solana](/verifiers/solana), [EVM](/verifiers/evm) and [Starknet](/verifiers/starknet) verifiers and the `molpha-verifier` crate all implement it identically.
 
 ## The verification pipeline
 
 ```text
-selectionSeed   = keccak256("MOLPHA_SELECTION_V1" ‖ feedId ‖ registryVersion ‖ canonicalTimestamp)
+selectionSeed   = keccak256(SELECTION_SEED_PREFIX ‖ sourceId ‖ u32(registryVersion) ‖ u64(timestamp / 1000))
 selectionBitmap = deriveWithoutReplacement(selectionSeed, nodeCount, groupSize)
-message         = keccak256("MOLPHA_MESSAGE_V1" ‖ feedId ‖ registryVersion ‖
-                            signaturesRequired ‖ signersBitmap ‖ value ‖ canonicalTimestamp)
+message         = keccak256(MESSAGE_PREFIX ‖ value ‖ sourceId ‖ u32(registryVersion) ‖
+                            u8(signaturesRequired) ‖ u64(timestamp) ‖ signersBitmap)
 X_coalition     = Σ Xᵢ   for each signer i in signersBitmap        (plain EC sum)
 challenge e     = keccak256(Pₓ ‖ Pₚ ‖ message ‖ commitment) mod Q
-accept iff        ethAddress(s·G − e·X_coalition) == commitment
+accept iff        popcount(signersBitmap) >= signaturesRequired
+              and signersBitmap ⊆ selectionBitmap
+              and ethAddress(s·G − e·X_coalition) == commitment
 ```
 
-- `s` — the aggregate Schnorr scalar
-- `commitment` — the Ethereum-style address (low 160 bits) of the nonce point `R`
-- `X_coalition` — the plain elliptic-curve sum of the public keys of every node that signed
-- `G` — the secp256k1 generator; `Q` — the curve group order
+| Symbol | Meaning |
+| --- | --- |
+| `SELECTION_SEED_PREFIX`, `MESSAGE_PREFIX` | 32-byte hashes of ASCII labels (see [Domain separators](#domain-separators)), not the labels themselves |
+| `u32`, `u64` | Big-endian integers. The seed preimage is 76 bytes, the message preimage 141 bytes |
+| `timestamp` | Unix milliseconds, stamped by the gateway. See [round timing](/concepts/attestations#round-timing) |
+| `X_coalition` | Plain elliptic-curve sum of the public keys of every node in `signersBitmap` |
+| `Pₓ`, `Pₚ` | x-coordinate (32 bytes) and y-parity (1 byte) of `X_coalition` |
+| `s` | Aggregate Schnorr scalar |
+| `commitment` | Ethereum-style address (low 160 bits of the hash) of the aggregate nonce point `R` |
+| `G`, `Q` | secp256k1 generator and group order |
 
-No `chainId` appears in the message — that is what makes a single signature valid on every chain.
-
-## PoP-Schnorr aggregation
-
-Molpha's scheme is **plain-sum Schnorr aggregation over secp256k1 with mandatory proof-of-possession (PoP) at registration**. It is *not* MuSig2: there are no delinearization coefficients and no global precomputed aggregate key. The verification key for any round is computed fresh as the plain EC sum of the actual signers' public keys.
-
-### Proof of possession
-
-Plain-sum aggregation is vulnerable to rogue-key attacks *unless* every registered key is proven to be controlled by its registrant. Molpha enforces this at registration: `addNode` / `add_node` requires a Schnorr proof over
-
-```text
-popDigest = keccak256(
-    POP_DOMAIN,          // keccak256("MOLPHA_VALIDATOR_V1")
-    verifierAddress,     // binds the PoP to this specific deployment
-    compressedPubKey
-)
-```
-
-checked with a defensive Schnorr verification (rejects zero signature/commitment, off-curve keys, and `s >= Q`). A key never enters any registry snapshot without a valid PoP.
-
-The one deliberate cross-chain divergence lives here: EVM hashes its address as 20 bytes, Starknet as 32 bytes. Since PoP is checked only at registration and is never part of `verify`, nodes simply produce a separate PoP per chain — data-result signatures remain fully chain-agnostic.
-
-### Why the signer set can't be forged
-
-- The `signersBitmap` is **inside the signed message** — the signature commits to exactly which keys participated.
-- The coalition key is recomputed by the verifier from the registry snapshot for the claimed bitmap; a valid aggregate over keys that didn't all contribute would require breaking the discrete log.
-- Signers must additionally fall inside the deterministic selection set (below), so even colluding registered nodes can't sign rounds they weren't selected for.
+The message has no `chainId`, so one signature is valid on every chain. Payload fields and encoding are described in [Attestations](/concepts/attestations).
 
 ## Node selection
 
-For each round, a pseudo-random subset of nodes (the **selection set**) is derived deterministically from on-chain inputs only, so anyone — including every verifier — can independently reproduce which nodes were eligible to sign. A caller cannot grind a favorable signer set.
+Each round, a pseudo-random subset of the registry version's nodes (the selection set) is eligible to sign. It is derived only from values in the payload and the registry snapshot, so every verifier reproduces it independently.
 
 ```text
-selectionSeed = keccak256(SELECTION_SEED_PREFIX, feedId, registryVersion, canonicalTimestamp)
+selectionSeed = keccak256(SELECTION_SEED_PREFIX ‖ sourceId ‖ u32(registryVersion) ‖ u64(timestamp / 1000))
 groupSize     = min(signaturesRequired + redundancyBuffer, nodeCount)
 ```
 
-`redundancyBuffer` is a protocol-admin parameter. The buffer widens the eligible set so the network can meet the threshold even if some selected nodes are offline. `verify` enforces both `popcount(signersBitmap) >= signaturesRequired` and `signersBitmap ⊆ selectionBitmap`.
+- `nodeCount` and `redundancyBuffer` are those of the payload's `registryVersion`. Changing the buffer publishes a new registry version, so selection for an existing version never changes.
+- The buffer widens the eligible set so a round can reach its quorum when some selected nodes are offline.
+- Selection reads only whole seconds. All rounds of one source and registry version within the same second share one selection set.
+- The caller does not choose the timestamp; the gateway stamps it. See [Security model](/protocol/security-model#selection-influence) for what that does and does not protect.
 
 ### Derivation algorithm
 
-`deriveWithoutReplacement(selectionSeed, nodeCount, groupSize)` performs **without-replacement** sampling:
+`deriveWithoutReplacement(selectionSeed, nodeCount, groupSize)` samples without replacement:
 
-- PRF: `keccak256(seed ‖ SELECTION_DOMAIN ‖ counter)` with `SELECTION_DOMAIN = keccak256("MOLPHA_SELECTION_DERIVE")`.
-- Each 256-bit digest yields **eight big-endian `uint32` limbs**.
-- **Bias rejection:** a limb is rejected when `limb ≥ floor(2³²/nodeCount) · nodeCount`; accepted limbs map via `limb % nodeCount` (skipping already-chosen positions). This keeps the distribution unbiased.
-- **Complement path:** when `groupSize > nodeCount/2`, the algorithm samples the `nodeCount − groupSize` *exclusions* instead and complements the full mask — cheaper for large groups.
+1. PRF: `keccak256(seed ‖ SELECTION_DOMAIN ‖ counter)`. Each 256-bit digest yields eight big-endian `uint32` limbs.
+2. Bias rejection: a limb is rejected when `limb ≥ floor((2³² − 1) / nodeCount) · nodeCount`. An accepted limb maps to `limb % nodeCount`, skipping positions already chosen.
+3. Complement path: when `groupSize > nodeCount / 2`, the algorithm samples the `nodeCount − groupSize` excluded nodes and complements the mask.
 
-The identical algorithm runs on Solana, EVM, and Starknet, so off-chain and on-chain selection always agree. (On Starknet, this is why `verify` gas is not strictly linear in signer count — the derivation switches algorithms at the `n/2` boundary.)
+The complement path is why `verify` cost on Starknet is not strictly linear in signer count.
 
 ### Bitmaps
 
 | Bitmap | Meaning |
-|---|---|
-| `selectionBitmap` | Derived: the nodes *eligible* to sign this round |
-| `signersBitmap` | Supplied in the payload and bound into the signed message: the nodes that *actually* signed |
+| --- | --- |
+| `selectionBitmap` | Derived: the nodes eligible to sign this round |
+| `signersBitmap` | In the payload and the signed message: the nodes that actually signed |
 
-Convention everywhere: **bit `i-1` ⇔ 1-based node index `i`**; max 256 nodes, one 256-bit word.
+Bit `i` is the node at 0-based index `i` of the registry version. A registry holds at most 256 nodes, one 256-bit word.
+
+## Plain-sum aggregation
+
+Molpha aggregates Schnorr signatures over secp256k1 by plain summation, with mandatory proof of possession at registration. It is not MuSig2: there are no delinearization coefficients and no precomputed aggregate key. The verification key for a round is the sum of the actual signers' public keys, recomputed by the verifier from the registry snapshot.
+
+The signer set cannot be forged:
+
+- `signersBitmap` is inside the signed message, so the signature commits to exactly which keys took part.
+- A valid aggregate over keys that did not all contribute would require breaking the discrete logarithm, given that every key has a proof of possession.
+- Signers must fall inside the selection set, so registered nodes cannot sign rounds they were not selected for.
+
+### Proof of possession
+
+Plain-sum aggregation is open to rogue-key attacks unless every key is proven to belong to its registrant. Each chain checks a Schnorr proof of possession before a key enters any registry snapshot.
+
+| Chain | Registration | Proof message |
+| --- | --- | --- |
+| EVM | `addNode` | `keccak256(POP_DOMAIN ‖ verifierAddress (20 bytes) ‖ compressedPubKey)` |
+| Starknet | `add_node` | Same, with the verifier address as 32 bytes |
+| Solana | `register_node` | `keccak256("MOLPHA_NODE_POP_V1" ‖ program_id ‖ node_id)`, where `node_id = keccak256("MOLPHA_NODE_ID_V1" ‖ owner ‖ compressedPubKey ‖ registration_salt)` |
+
+The Solana labels are raw ASCII, not hashed. On Solana a signing key can be registered only once (`Secp256k1KeyClaim`). EVM and Starknet reject a zero signature or commitment, off-curve keys and `s >= Q`.
+
+The proof binds one deployment, so nodes produce one proof per chain. Proof of possession is checked only at registration, never in `verify`, so attestation signatures stay chain-agnostic.
 
 ## Domain separators
 
-All domain separators are `keccak256` of their ASCII labels and are identical across every implementation:
-
 | Constant | Value | Used for |
-|---|---|---|
-| `MESSAGE_PREFIX` | `keccak256("MOLPHA_MESSAGE_V1")` | The signed data message |
-| `SELECTION_SEED_PREFIX` | `keccak256("MOLPHA_SELECTION_V1")` | The node-selection seed |
-| `SELECTION_DOMAIN` | `keccak256("MOLPHA_SELECTION_DERIVE")` | PRF domain inside the selection derivation |
-| `POP_DOMAIN` | `keccak256("MOLPHA_VALIDATOR_V1")` | Node proof-of-possession |
+| --- | --- | --- |
+| `MESSAGE_PREFIX` | `keccak256("MOLPHA_MESSAGE_V1")` | The signed message |
+| `SELECTION_SEED_PREFIX` | `keccak256("MOLPHA_SELECTION_V1")` | The selection seed |
+| `SELECTION_DOMAIN` | `keccak256("MOLPHA_SELECTION_DERIVE")` | PRF inside the selection derivation |
+| `POP_DOMAIN` | `keccak256("MOLPHA_VERIFIER_V1")` | Proof of possession on EVM and Starknet |
+
+The first three are identical in every implementation. Solana uses its own proof-of-possession labels, shown above. The Solana program also uses raw ASCII labels for epoch tickets (`MOLPHA_TICKET_V1`, `MOLPHA_TICKET_ID_V1`, `MOLPHA_DISPATCH_V1`); see [Epoch settlement](/protocol/solana-program#epoch-settlement).
 
 ## The off-chain round
 
-The on-chain verifiers fix everything the signed payload must satisfy; the off-chain signing session (nonce lifecycle, message transport, retry semantics) is run by the node network and gateway. What is guaranteed regardless of transport:
+The node network and the gateways run the signing session: nonce commitments, message transport and retries. Whatever the transport, a verifier accepts only an aggregate that:
 
-- The signed message covers `(feedId, registryVersion, signaturesRequired, signersBitmap, value, canonicalTimestamp)` under `MOLPHA_MESSAGE_V1`.
-- Signers must be a subset of the deterministic selection set derived from `(feedId, registryVersion, canonicalTimestamp)`.
-- At least `signaturesRequired` signers must participate; the signature is a plain-sum aggregate over exactly the keys in `signersBitmap`.
+- covers `(value, sourceId, registryVersion, signaturesRequired, timestamp, signersBitmap)` under `MOLPHA_MESSAGE_V1`;
+- comes from at least `signaturesRequired` signers, all inside the selection set;
+- is a plain-sum aggregate over exactly the keys in `signersBitmap`.

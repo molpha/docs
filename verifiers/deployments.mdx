@@ -1,35 +1,44 @@
 ---
-title: "Deployments & Testnet Status"
-description: "Current testnet deployments, what is live, and what is not yet implemented."
+title: "Deployments"
+description: "Program ID, verifier addresses and service endpoints for each network."
 ---
 
-**Brebeneskul** (A2) is the current Molpha Solana program release on Devnet.
+Molpha runs on Solana devnet with verifiers on EVM and Starknet testnets. All contracts are pre-audit: don't secure real value with them.
 
-## Deployed addresses
+## Contracts
 
 | Chain | Network | Address |
-|---|---|---|
-| Solana | Devnet | `MoLFGDpFoVnQgwbkTNScKPohCxhbfd61JjFrnotuwzh` |
+| --- | --- | --- |
+| Solana | Devnet | `chivcFQgxzwkpLvW41PV431HQ4dYpaW3povQH3AdpQt` |
 | Ethereum | Sepolia | `0xE1fd792b7E54e0C8F0Cd1c8055E446ff36d233eB` |
 | Arbitrum | Sepolia | `0xE1fd792b7E54e0C8F0Cd1c8055E446ff36d233eB` |
 | Avalanche | Fuji | `0xE1fd792b7E54e0C8F0Cd1c8055E446ff36d233eB` |
 | BNB Chain | Testnet | `0xE1fd792b7E54e0C8F0Cd1c8055E446ff36d233eB` |
 | Starknet | Sepolia | `0x0378df4dbecf8f0c7daa801282932f7011c7a5e5773bab9eaf68f5fa5e7530ef` |
 
-EVM verifiers share the same address across all chains via CREATE2.
+The EVM verifier is deployed with CREATE2, so it has the same address on every EVM network. The SDK exports these addresses, and the MCP `get_capabilities` tool returns them.
 
-## Live today
+## Services
 
-- **Solana program on Devnet** (program ID above): node registry, node staking, USDC plans/subscriptions, delegates, bonded gateways, maintained `Feed` accounts, permissionless `submit_data_update`, subscription and agent round settlement (`settle_round_receipt` / `settle_agent_round`), finalize/dispute paths, reward accounting and claims, and direct Rust verification through `molpha-verifier`.
-- **SDK** — [`@molpha/sdk`](https://www.npmjs.com/package/@molpha/sdk) v0.1.0: the full consumer flow (subscribe → derive feed → execute round → submit update → read feed) plus framework-agnostic EVM and Starknet verifier argument builders.
-- **EVM verifiers** — deployed on Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji, and BSC testnet.
-- **Starknet verifier** — deployed on Starknet Sepolia, with cross-chain parity tests proving that unmodified EVM-produced signatures verify on Cairo.
+| Service | Endpoint |
+| --- | --- |
+| Gateway (devnet) | `https://dev-gateway.molpha.io` |
+| Hosted MCP server | `https://mcp.molpha.io/mcp` |
 
-## Not yet implemented
+## Packages
 
-- **Registry versioning & slashing economics** — A3 (Chivchyn) ships Solana registry versioning with historical validation (prerequisite for dispute adjudication), then broader proof-based operator slashing beyond the existing `dispute_round` path. The devnet node set remains permissioned.
-- **Mainnet** — gated on a full protocol audit. A4 (Dzembronia) targets Solana mainnet-beta, Starknet, and one EVM chain — not every supported chain.
+| Package | Install |
+| --- | --- |
+| TypeScript SDK | `npm install @molpha/sdk @anchor-lang/core bn.js` ([npm](https://www.npmjs.com/package/@molpha/sdk)) |
+| MCP server | `npx -y @molpha/mcp` ([npm](https://www.npmjs.com/package/@molpha/mcp)) |
+| Rust verifier | `molpha-verifier` ([crates.io](https://crates.io/crates/molpha-verifier)) |
+| EVM verifier | `forge install molpha/evm-verifier` ([GitHub](https://github.com/molpha/evm-verifier)) |
+| Starknet verifier | [GitHub](https://github.com/molpha/molpha-starknet) |
 
-<Warning>
-All deployments are **pre-audit devnet** contracts with a permissioned node set. Staking and reward accounting are live; slashing is not. There is no uptime SLA and no full economic security backing devnet data. Do not rely on them for value. See the [Security Model](/protocol/security-model) for the full trust assumptions.
-</Warning>
+## Network status
+
+- **Node set.** Nodes are run by independent operators admitted by the protocol authority. Each posts a USDC deposit and can be slashed with on-chain evidence.
+- **Audit.** No external audit has been completed. Mainnet follows the audit.
+- **Service level.** Devnet has no uptime guarantee, and addresses can change between releases.
+
+The full trust model is in [Security model](/protocol/security-model).

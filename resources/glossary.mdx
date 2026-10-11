@@ -1,24 +1,29 @@
 ---
 title: "Glossary"
+description: "Definitions of Molpha terms."
 ---
 
 | Term | Meaning |
 |---|---|
-| **Feed** | Application-facing data source backed by a deterministic `feedId` and signed payloads. It may also have a maintained Solana `Feed` account. |
-| **Solana `Feed` account** | Account holding the latest verified value for a feed; PDA `["molpha_feed", feed_id]`. |
+| **Source** | An API definition, identified by `sourceId` = `keccak256` of its canonical API config JSON. The source ID does not include an owner or a quorum. |
+| **Feed** | The Solana `Feed` account: the latest verified value one submitter wrote for a source at one quorum. |
+| **Solana `Feed` account** | Account holding the latest verified value; PDA `["molpha_feed", source_id, [signatures_required], submitter]`. Created lazily by the first `submit_attestation` from that submitter. |
 | **Round** | One coordination event: one fetch, one signing session, one aggregate signature. |
-| **DataUpdate** | The self-contained signed result payload: feedId, registryVersion, signaturesRequired, value, canonicalTimestamp. |
-| **Canonical timestamp** | The round timestamp included in the signed message; the basis for staleness checks. |
-| **Registry version** | An immutable snapshot of the node-key set; incremented on every add/remove. |
-| **Selection set** | The pseudo-random subset of nodes eligible to sign a given round, derived from `(feedId, registryVersion, canonicalTimestamp)`. |
+| **Attestation** | The self-contained signed result of a round: a `payload` (value, sourceId, registryVersion, signaturesRequired, timestamp) and a `signature` (aggregate scalar, commitment, signersBitmap). |
+| **Timestamp** | The round's time in unix milliseconds, assigned by the gateway on a fixed 100 ms tick (always a multiple of 100) and included in the signed message; the basis for staleness checks (compare `timestamp / 1000` with a seconds clock). |
+| **Registry version** | An immutable snapshot of the node-key set and the redundancy buffer. A new version is created on every node add or remove and every redundancy-buffer change; on Solana also when a node is punished or reinstated. |
+| **Selection set** | The pseudo-random subset of nodes eligible to sign a given round, derived from `(sourceId, registryVersion, timestamp / 1000)` and sized by the group size. |
 | **Group size** | `signaturesRequired + redundancyBuffer`, capped at `nodeCount`; the size of the selection set. |
-| **Redundancy buffer** | Admin parameter widening the selection set beyond the threshold so dropouts don't fail the round. |
-| **Signers bitmap** | A 256-bit word where bit `i-1` marks 1-based node index `i` as a signer; bound into the signed message. |
+| **Redundancy buffer** | Admin parameter, stored in each registry snapshot, widening the selection set beyond the threshold so dropouts don't fail the round. |
+| **Signers bitmap** | A 256-bit word (32 bytes, big-endian) where bit `i` marks the node at 0-based registry index `i` as a signer; bound into the signed message. |
 | **Coalition key** | Plain EC sum of the signers' public keys; the effective public key for the aggregate signature. |
 | **Commitment** | Ethereum-style address (low 160 bits) of the Schnorr nonce point `R`. |
 | **PoP** | Proof-of-Possession; a Schnorr signature proving control of a node key at registration. Molpha's sole rogue-key defense. |
-| **Plan / Subscription** | USDC tier definition / a consumer's active monthly subscription on Solana; required to maintain feeds, not to read feeds. |
-| **Delegate** | Hot agent authority under a subscription (`["molpha_delegate", owner, delegate]`) with request and quorum caps. |
-| **x402 escrow** | Pay-per-request agent path: HTTP `402` funding loop plus on-chain `AgentEscrow` ATA settled by `settle_agent_round`. |
-| **AgentEscrow** | Solana PDA + USDC ATA for x402 agent rounds (`["molpha_agent", authority, gateway]`). Not a separate access model from x402. |
-| **Gateway** | HTTP service that dispatches signing rounds, returns payloads, and handles agent payment/settlement routing. |
+| **Plan / Subscription** | USDC tier definition / a consumer's 30-day subscription on Solana. A subscription pays for gateway rounds; it is not needed to read feeds or to submit an attestation. |
+| **Delegate** | Hot agent authority under a subscription (`["molpha_delegate", owner, delegate]`) with a request cap (`max_data_requests`) that the gateway enforces. |
+| **x402** | Pay-per-request path: an x402 v2 `exact` USDC payment to the protocol treasury, verified by a trusted facilitator, authorizes exactly one round (`POST /v1/x402/execute`). No escrow account, no caller `RequestAuth`. |
+| **RequestAuth** | Ed25519 signature (`authSig` + `authTimestamp`, unix seconds) by a consumer authority or delegate. Applies only to the subscription endpoint `POST /v1/round/execute`. |
+| **Gateway** | Molpha-operated HTTP service that admits requests, assigns each round's timestamp, dispatches signing rounds, returns attestations, and submits sampled rounds as epoch tickets. |
+| **Epoch** | A fixed reward window on Solana with its own pool, ticket threshold and per-node counters. Anyone can finalize an epoch after its ticket window and credit its rewards. |
+| **Ticket** | A round submitted with `submit_ticket` as participation evidence for its epoch. A round qualifies when a hash over its signed message and signature falls below the epoch's threshold, and it must carry the gateway's dispatch signature. |
+| **Slashing** | `slash_offence` on Solana: anyone files evidence of a node fault; the program removes the node from the registry and slashes its deposit and unclaimed rewards, or freezes it for one day in the case of inactivity. |

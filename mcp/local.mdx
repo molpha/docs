@@ -1,0 +1,165 @@
+---
+title: "Local MCP server (stdio)"
+sidebarTitle: "Local (stdio)"
+description: "Run the Molpha MCP server on your machine with its own signer, a dry-run lock and spending caps."
+---
+
+The local server runs next to your MCP client over stdio and holds a signer, so one tool call runs a round, pays for it or publishes to Solana. Use it for unattended agents and for private API sources. It needs **Node.js 24 or later** and nothing to clone or build.
+
+## Run levels
+
+The server reports its run level in `get_capabilities`:
+
+| `runLevel` | Behaviour | How you get it |
+| --- | --- | --- |
+| `read-only` | Read tools only; no signer loaded | No signer configured, `SIGNER_BACKEND=none`, or `--read-only` |
+| `dry-run` | Every tool available, but writes and payments are previews | `MOLPHA_DRY_RUN=true` |
+| `live` | Writes sign and spend | A signer, and `MOLPHA_DRY_RUN` unset or `false` |
+
+## Set up
+
+<Steps>
+  <Step title="Try it read-only">
+    No wallet needed:
+
+    ```sh
+    claude mcp add molpha -- npx -y @molpha/mcp --read-only
+    ```
+  </Step>
+
+  <Step title="Choose a signer">
+    Use a dedicated testnet wallet for the agent.
+
+    | Signer | Use it for | Settings |
+    | --- | --- | --- |
+    | **Privy** | Agents and long-running setups; the key stays with Privy and its policies apply | `SIGNER_BACKEND=keychain`, `KEYCHAIN_BACKEND=privy`, `PRIVY_APP_ID`, `PRIVY_APP_SECRET`, `PRIVY_WALLET_ID`, `PRIVY_WALLET_ADDRESS` |
+    | **Turnkey** | Same, on Turnkey | `SIGNER_BACKEND=keychain`, `KEYCHAIN_BACKEND=turnkey`, `TURNKEY_API_PUBLIC_KEY`, `TURNKEY_API_PRIVATE_KEY`, `TURNKEY_ORGANIZATION_ID`, `TURNKEY_WALLET_ADDRESS` |
+    | **Local keypair** | Local development only | `SIGNER_BACKEND=memory`, `OWNER_KEYPAIR=/absolute/path/to/keypair.json` |
+
+    Put the settings in a `.env` file together with `MOLPHA_DRY_RUN=true`. Point `OWNER_KEYPAIR` at a file; never paste a key array into a client config.
+  </Step>
+
+  <Step title="Check the setup">
+    Run the doctor from the folder that holds `.env`:
+
+    ```sh
+    npx -y @molpha/mcp doctor
+    ```
+
+    It checks the signer, wallet, Solana RPC and gateway, then prints a ready-to-paste config for each client with secrets left as placeholders.
+  </Step>
+
+  <Step title="Connect your client">
+    <CodeGroup>
+    ```sh Claude Code
+    claude mcp add molpha \
+      -e SIGNER_BACKEND=memory \
+      -e OWNER_KEYPAIR=/absolute/path/to/devnet-keypair.json \
+      -e MOLPHA_DRY_RUN=true \
+      -- npx -y @molpha/mcp
+    ```
+
+    ```json Cursor (.cursor/mcp.json)
+    {
+      "mcpServers": {
+        "molpha": {
+          "command": "npx",
+          "args": ["-y", "@molpha/mcp"],
+          "env": {
+            "SIGNER_BACKEND": "memory",
+            "OWNER_KEYPAIR": "/absolute/path/to/devnet-keypair.json",
+            "MOLPHA_DRY_RUN": "true"
+          }
+        }
+      }
+    }
+    ```
+
+    ```json VS Code (.vscode/mcp.json)
+    {
+      "servers": {
+        "molpha": {
+          "type": "stdio",
+          "command": "npx",
+          "args": ["-y", "@molpha/mcp"],
+          "env": {
+            "SIGNER_BACKEND": "memory",
+            "OWNER_KEYPAIR": "/absolute/path/to/devnet-keypair.json",
+            "MOLPHA_DRY_RUN": "true"
+          }
+        }
+      }
+    }
+    ```
+
+    ```toml Codex (~/.codex/config.toml)
+    [mcp_servers.molpha]
+    command = "npx"
+    args = ["-y", "@molpha/mcp"]
+
+    [mcp_servers.molpha.env]
+    SIGNER_BACKEND = "memory"
+    OWNER_KEYPAIR = "/absolute/path/to/devnet-keypair.json"
+    MOLPHA_DRY_RUN = "true"
+    ```
+    </CodeGroup>
+
+    For Privy or Turnkey, swap in the settings from the signer table.
+  </Step>
+
+  <Step title="Turn on spending">
+    Fund the wallet with Devnet SOL and Devnet USDC ([Circle faucet](https://faucet.circle.com/), **USDC** on **Solana Devnet**). Pick how rounds are paid:
+
+    - **x402** needs no setup: each round is paid from the wallet's USDC.
+    - **A subscription** is created once from the CLI, because subscribing debits USDC. Preview it, then run it without `--dry-run`:
+
+      ```sh
+      npx -y @molpha/mcp provision subscribe --plan Basic --max-price-usdc 20000000 --dry-run
+      ```
+
+      `--max-price-usdc` is a cap in USDC base units (6 decimals). Use `provision extend` to extend a subscription.
+
+    Then set `MOLPHA_DRY_RUN=false` in the client config and restart the server.
+  </Step>
+</Steps>
+
+Claude Code users can also install the Molpha skill, which teaches the agent the safe workflow and how to write Solana, EVM and Starknet consumers:
+
+```text
+/plugin marketplace add molpha/mcp
+/plugin install molpha@molpha
+```
+
+## Guardrails
+
+While `MOLPHA_DRY_RUN=true`, a write call that passes `dryRun: false` is refused with `dry_run_locked`. Only you can turn spending on, by editing the config; an agent cannot do it from a conversation.
+
+| Setting | Default | Limits |
+| --- | --- | --- |
+| `MOLPHA_X402_MAX_PRICE_USDC` | `1` | Price of one x402 round |
+| `MOLPHA_X402_MAX_SPEND_PER_DAY_USDC` | `10` | x402 spend per day, counting every payment signed |
+| `MOLPHA_MAX_EXECUTES_PER_DAY` | `100` | Solana submits per day |
+| `MOLPHA_SOURCE_MAX_PER_ROUND_USDC` | `0.25` | Worst-case paid-source cost per round |
+| `MOLPHA_SOURCE_MAX_SPEND_PER_DAY_USDC` | `1` | Paid-source spend per day |
+
+Daily caps are per process and reset on restart. For a hard limit, also set a policy on the wallet (Privy and Turnkey support this).
+
+## Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `SOLANA_RPC` | `https://api.devnet.solana.com` | Solana RPC endpoint |
+| `GATEWAY_ENDPOINTS` | `https://dev-gateway.molpha.io` | Comma-separated Molpha gateway URLs |
+| `GATEWAY_AUTHORITIES` | discovered via `GET /v1/info` | Base58 gateway authority for each endpoint, in the same order |
+| `MOLPHA_EVM_NETWORKS` | `evm-sepolia` | EVM networks to build verifier arguments for |
+| `MOLPHA_STARKNET_NETWORKS` | `starknet-sepolia` | Starknet networks to build verifier arguments for |
+| `MOLPHA_DRY_RUN` | `false` | Lock all writes to previews |
+| `MOLPHA_SOURCE_PAYER_KEY` | — | EVM key that pays paywalled sources. Never printed or returned. |
+| `MOLPHA_SOURCE_PAYMENT_NETWORKS` | — | CAIP-2 networks a source may be paid on, e.g. `eip155:84532`. Empty keeps source payment off. |
+
+Signer variables are in the [signer table](#set-up). Paying paywalled sources is covered in the [tool reference](/mcp/tools#providers-and-paid-sources).
+
+## Local-only features
+
+- **One-call writes.** `execute_subscription_round`, `execute_x402_round` and `submit_attestation` sign with the server's wallet. Round tools accept `autoSubmit: true` to publish to Solana in the same call, and `dryRun: true` to preview.
+- **Private API secrets.** `execute_subscription_round` accepts `encryptSecrets` for `{{secret.<name>}}` placeholders. The values are encrypted for the nodes; the gateway never sees them.

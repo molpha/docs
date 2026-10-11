@@ -1,16 +1,15 @@
 ---
 title: "Subscriptions"
 description: "Monthly USDC access for creating and maintaining Molpha feeds."
-icon: "calendar-check"
 ---
 
-Subscriptions are the producer access model. A subscription lets a wallet request and settle rounds for feeds derived from that wallet or its delegates.
+Subscriptions are the producer access model. A subscription lets a wallet, and the delegates it adds, request signed rounds through a gateway. The gateway counts those rounds against the subscription's round quota.
 
 ## Use subscriptions when
 
 - You publish a feed that other users or contracts consume.
 - You need ongoing quota instead of one-off requests.
-- You want stable feed ownership and delegate management.
+- You want to manage delegates under one plan.
 - You operate a backend or keeper that updates Solana feed accounts.
 
 ## Flow
@@ -18,7 +17,7 @@ Subscriptions are the producer access model. A subscription lets a wallet reques
 1. Fund the owner wallet with Solana Devnet SOL and Devnet USDC from [Circle's faucet](https://faucet.circle.com/) (select **USDC** on **Solana Devnet**).
 2. Fetch the current plan price.
 3. Subscribe with an explicit `maxPriceUsdc` safety bound.
-4. Derive the `feedId`.
+4. Build the `apiConfig`. Its canonical hash is the `sourceId`; there is no separate feed ID to derive.
 5. Request signed updates through the gateway.
 6. Submit verified updates to Solana when you maintain a public feed account.
 
@@ -39,9 +38,13 @@ await sdk.solana.subscribe(PlanType.Basic, {
 | `subscription_price` | Monthly USDC price in atomic units |
 | `max_signers` | Highest quorum the plan can request (copied onto the subscription) |
 | `max_delegates` | Max delegated authorities the owner may add |
-| `private_api_enabled` | Whether encrypted/private API configs are available |
+| `max_rounds` | Round quota per subscription term (copied onto the subscription) |
+| `private_api_enabled` | Plan flag stored on chain; the gateway does not currently enforce it. |
+| `is_active` | An inactive plan cannot be subscribed to or extended (`PlanNotActive`) |
 
-The `Subscription` account also tracks `used_rounds` / `max_rounds` (initialized to unlimited) and mirrors `max_signers` / `max_delegates` from the plan at subscribe time.
+The `Subscription` account copies `max_rounds`, `max_signers` and `max_delegates` from the plan at subscribe time, and stores `valid_until`. `subscribe` sets `valid_until` to 30 days from now. `extend_subscription` adds 30 days to it, or sets it to 30 days from now when the subscription has lapsed. Extending does not copy the plan limits again.
+
+The program records no usage: the gateway counts rounds per 30-day term (see [Admission](/gateways/overview#admission)). Prepaying more months does not add quota to the current term. When the quota is exhausted or the subscription is inactive, the gateway answers `403`.
 
 ## Consumer note
 

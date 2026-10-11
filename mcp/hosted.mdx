@@ -1,0 +1,141 @@
+---
+title: "Hosted MCP (mcp.molpha.io)"
+sidebarTitle: "Hosted (mcp.molpha.io)"
+description: "Use Molpha's hosted MCP server with your own wallet: no install, no keys handed over."
+---
+
+`https://mcp.molpha.io/mcp` is the Molpha MCP server over HTTP. It is **keyless**: it holds no signer and accepts no private keys. Read tools work immediately, and anything that needs a signature comes back for your own wallet to sign.
+
+## Connect
+
+<CodeGroup>
+```sh Claude Code
+claude mcp add --transport http molpha https://mcp.molpha.io/mcp
+```
+
+```json Cursor (.cursor/mcp.json)
+{ "mcpServers": { "molpha": { "url": "https://mcp.molpha.io/mcp" } } }
+```
+
+```json VS Code (.vscode/mcp.json)
+{ "servers": { "molpha": { "type": "http", "url": "https://mcp.molpha.io/mcp" } } }
+```
+
+```sh Claude Desktop (via mcp-remote)
+npx -y mcp-remote https://mcp.molpha.io/mcp
+```
+</CodeGroup>
+
+The server has no wallet of its own, so name the wallet you mean on reads: `submitter` for `describe_feed` and `get_latest_value`, `payer` for `get_x402_status`.
+
+## What your wallet signs
+
+| Operation | Tools, in order | Your wallet signs |
+| --- | --- | --- |
+| Subscription round | `begin_session` → `complete_session` → `execute_subscription_round` | One text message per session |
+| x402 round | `prepare_x402_round` → `execute_x402_round` | A USDC transfer, which you do **not** broadcast |
+| Publish to Solana | `prepare_submit_attestation` → `send_signed_transaction` | The submit transaction |
+
+`autoSubmit`, `dryRun` and `encryptSecrets` are not offered on the hosted server: the prepare steps are already previews, and private API secrets must not pass through a shared server. Use the [local server](/mcp/local) for private sources.
+
+## Pay per request (x402)
+
+No subscription and no sign-in: the payment is the authorization.
+
+<Steps>
+  <Step title="Quote">
+    `get_x402_status({ signaturesRequired, payer })` returns the round price, the payee (the protocol treasury) and your USDC balance.
+  </Step>
+  <Step title="Prepare">
+    `prepare_x402_round({ apiConfig, signaturesRequired, payer, chains, maxAge? })` returns an `unsignedTransaction` (a USDC transfer to the protocol treasury), a `summary` of the payment, and a `challenge`.
+  </Step>
+  <Step title="Sign, don't send">
+    Check the `summary` against your wallet's view of the transaction, then sign it as `payer`. Do **not** broadcast it: the gateway's facilitator co-signs, pays the network fee and submits it.
+  </Step>
+  <Step title="Execute">
+    `execute_x402_round({ challenge, signedTransaction })` runs the round and returns the attestation, verifier arguments and a `paymentReceipt`.
+  </Step>
+</Steps>
+
+A prepared payment is valid for about a minute; after that `execute_x402_round` answers `payment_expired` and you prepare again. One payment buys one round. Pricing and settlement are described in [x402 pay-per-request](/access-models/x402).
+
+## Sign in with your wallet (SIWX)
+
+Subscription rounds are authorized by a sign-in session. Your wallet signs one Sign-In-With-X text message (the x402 `sign-in-with-x` extension in its Solana form), and the gateway returns a short-lived bearer token. The message is not a transaction and moves no funds.
+
+<Steps>
+  <Step title="Check access">
+    `describe_access({ address, owner? })` returns the wallet's `role` (`owner`, `delegate` or `none`) and its limits. Run it first: a wallet with role `none` is refused only after it has signed.
+  </Step>
+  <Step title="Begin a session">
+    `begin_session({ address, owner? })` returns the `message` to sign, an opaque `challenge` and `expiresAt`. A [delegate](/access-models/delegates) passes its own address as `address` and the subscription owner as `owner`.
+  </Step>
+  <Step title="Sign the message">
+    Sign the exact UTF-8 bytes of `message` with your wallet's message-signing function (`signMessage`), not transaction signing. No prefix, no envelope, no trailing newline. Base58, base64 or hex signatures are accepted.
+  </Step>
+  <Step title="Complete the session">
+    `complete_session({ challenge, signature })` returns a `sessionToken`, the `role` it carries and `expiresAt`.
+  </Step>
+  <Step title="Run rounds">
+    `execute_subscription_round({ sessionToken, apiConfig, signaturesRequired, chains })` returns the attestation and verifier arguments. Each call uses one round of the subscription's quota.
+  </Step>
+</Steps>
+
+Before returning a challenge, the server checks it against its own configuration: the gateway domain, the Solana cluster, the gateway PDA and program, and a short expiry. Read it anyway before you sign. It looks like this:
+
+```text
+dev-gateway.molpha.io wants you to sign in with your Solana account:
+<your wallet address>
+
+Sign in to Molpha gateway <gateway PDA> as subscriber or delegate. This signature does not move funds.
+
+URI: https://dev-gateway.molpha.io/v1/session
+Version: 1
+Chain ID: EtWTRABZaYq6iMfeYKouRu166VU2xqa1
+Nonce: 5f3a9c0e7b1d4a26c8e0f1a2b3c4d5e6
+Issued At: 2026-10-07T12:00:00.000Z
+Expiration Time: 2026-10-07T12:05:00.000Z
+Resources:
+- molpha:program:<program id>
+- molpha:gateway:<gateway PDA>
+- molpha:subscription:<subscription owner>
+```
+
+In Node, with a devnet keypair and [`@solana/kit`](https://www.npmjs.com/package/@solana/kit):
+
+```js
+import { readFileSync } from "node:fs";
+import { createKeyPairFromBytes, getBase58Decoder, signBytes } from "@solana/kit";
+
+const secret = Uint8Array.from(JSON.parse(readFileSync(process.env.KEYPAIR_PATH, "utf8")));
+const { privateKey } = await createKeyPairFromBytes(secret);
+const signature = getBase58Decoder().decode(
+  await signBytes(privateKey, new TextEncoder().encode(message)), // message from begin_session
+);
+```
+
+`solana sign-offchain-message` does **not** work: it wraps the text in an envelope and is refused with `invalid_signature`. Never paste a private key into a chat to get a signature.
+
+### About the session token
+
+- **Short-lived.** 30 minutes by default, never past the subscription term. There is no refresh: sign in again.
+- **One wallet, one gateway.** The token is valid only at the gateway that issued it.
+- **Identity only.** The gateway checks the subscription and delegate against chain state (cached for a few seconds) on every round, so removing a delegate or a lapsed subscription ends access within seconds, whatever tokens exist.
+- **A credential.** Keep it out of logs. It passes through the hosted server on each call and is never stored there. To keep it off the server entirely, call the gateway's [session routes](/gateways/overview#sign-in-sessions) directly.
+
+## Publish to Solana
+
+`prepare_submit_attestation({ result, payer })` takes a round tool's output unchanged and returns an unsigned `submit_attestation` transaction. `payer` pays the fee and becomes the feed's submitter. Sign it, then broadcast it yourself or pass it to `send_signed_transaction({ challenge, signedTransaction })`.
+
+## Errors
+
+| Code | Meaning | What to do |
+| --- | --- | --- |
+| `invalid_signature` | Not the address's signature over the exact message | Sign `message` as returned, as raw UTF-8 |
+| `invalid_challenge`, `sign_in_rejected` | Unknown, expired or already-used challenge | Call `begin_session` again |
+| `forbidden` | No active subscription, out of quota, or no delegate under that owner | Check `describe_access` |
+| `session_invalid` | Token unknown, expired or revoked | Sign in again |
+| `payment_expired`, `transaction_expired` | The prepared transaction lapsed (about a minute) | Prepare again |
+| `round_conflict` | You already have a round for this source and quorum in the current 100 ms tick | Wait at least 100 ms, then call again |
+
+The full list is in the [tool reference](/mcp/tools#errors).

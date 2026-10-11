@@ -1,0 +1,118 @@
+---
+title: "Solana program"
+sidebarTitle: "Solana program"
+description: "Accounts, instructions, epoch rewards, node deposits and slashing in the Molpha Solana program."
+---
+
+This page describes the internals of the Molpha Solana program: its accounts, every instruction, how epoch rewards are paid and how nodes are punished. To read or write feeds from your own program, see [Solana verifier](/verifiers/solana) instead.
+
+The program (`molpha`, Anchor, ID `chivcFQgxzwkpLvW41PV431HQ4dYpaW3povQH3AdpQt`) is Molpha's canonical settlement layer. It holds the versioned node registry, node deposits, registered gateways, plans and subscriptions, epoch rewards and `Feed` accounts. All amounts are USDC, the mint in `ProtocolConfig.usdc_mint`.
+
+## Account model
+
+| Account | Seeds | Purpose |
+| --- | --- | --- |
+| `ProtocolConfig` | `["molpha_config"]` | Global configuration: authority, USDC mint, fees, deposit size, timing parameters. The treasury is this PDA's USDC token account |
+| `RegistryState` | `["molpha_registry"]` | Pointer to the current registry version. Owns the node deposit vault |
+| `Registry` | `["molpha_registry", version_u32_le]` | One registry version: ordered `Node` addresses, node count, redundancy buffer, `active_from`, `grace_active_until`. See [Registry versions](/concepts/registry-versions) |
+| `Node` | `["molpha_node", node_owner]` | Node identity: secp256k1 key `(x, y)`, status, endpoint, locked deposit, claimable rewards |
+| `Secp256k1KeyClaim` | `["molpha_secp_key", keccak256(compressed_pubkey)]` | Reserves a signing key so it can be registered only once |
+| `Gateway` | `["molpha_gateway", gateway_authority]` | A gateway registered by the protocol authority: authority key, endpoint, status. Holds no funds |
+| `Plan` | `["molpha_plan", plan_type_u8]` | Subscription tier |
+| `Subscription` | `["molpha_subscription", owner]` | Subscriber state |
+| `Delegate` | `["molpha_delegate", owner, delegate]` | Delegated authority for subscription-backed rounds |
+| `Feed` | `["molpha_feed", source_id, [signatures_required], submitter]` | Latest verified value one submitter wrote for a source and quorum. See [Feeds](/concepts/feeds) |
+| `EpochState` | `["molpha_epoch", epoch_u64_le]` | One reward epoch: window, ticket threshold, pool, per-node counters |
+| `TicketMarker` | `["molpha_ticket", ticket_id]` | Marks a round as already counted as a ticket |
+| `PunishmentCase` | `["molpha_punishment", evidence_hash]` | Record of an executed punishment; the same evidence cannot be filed twice |
+
+A `Registry` stores `Node` addresses, not keys. Verification reads each signer's key from its `Node` account, and bit `i` of a signers bitmap refers to `registry.nodes[i]`.
+
+## Main instructions
+
+### Permissionless
+
+| Instruction | Purpose |
+| --- | --- |
+| `submit_attestation(args)` | Verify an attestation and write it to the submitter's `Feed`. The only instruction that creates or updates a `Feed`. See [Solana verifier](/verifiers/solana) |
+| `submit_ticket(epoch, attestation, roster_slots, coalition_key)` | Record a sampled round as participation evidence for its epoch |
+| `sweep_treasury_revenue(open_epoch)` | Book unswept treasury income into the open epoch's pool |
+| `finalize_epoch(epoch)` | Freeze an epoch's payout weights after its ticket window and create the epoch two ahead |
+| `credit_epoch_rewards(epoch, slots)` | Credit a finalized epoch's shares to node reward balances |
+| `close_epoch(epoch, open_epoch)`, `close_ticket_marker()` | Close finished accounts and return their rent |
+| `slash_offence(offence)` | Punish nodes with on-chain evidence; the reporter earns a bounty |
+| `reinstate_node()` | Return a frozen node to the registry after its freeze window (the protocol authority can do it earlier) |
+
+### Subscribers
+
+| Instruction | Purpose |
+| --- | --- |
+| `subscribe(plan_type)` | Pay the plan price and open a 30-day subscription |
+| `extend_subscription()` | Pay again and extend `valid_until` by 30 days |
+| `add_delegate(args)`, `remove_delegate(args)` | Manage delegated authorities |
+
+### Node owners
+
+| Instruction | Signers | Purpose |
+| --- | --- | --- |
+| `register_node(args)` | Protocol authority and node owner | Check the key's proof of possession, claim the key, lock the deposit, append the node in a new registry version |
+| `update_node_endpoint(args)` | Node owner | Change the node's IP and port |
+| `deactivate_node(node_owner)` | Node owner or protocol authority | Remove the node in a new registry version and start the withdrawal cooldown |
+| `withdraw_node_deposit()` | Node owner | Withdraw the remaining deposit of a deactivated or tombstoned node after the cooldown |
+| `claim_node_rewards()` | Node owner | Withdraw credited rewards |
+
+### Protocol authority
+
+| Instruction | Purpose |
+| --- | --- |
+| `initialize(args)` | Create the config, genesis registry, treasury, deposit vault and first epochs. Signed by the program's upgrade authority |
+| `update_config(args)` | Change protocol parameters |
+| `add_plan(config)`, `update_plan(config)` | Manage subscription plans |
+| `update_registry_policy(redundancy_buffer)` | Set the redundancy buffer (1 to 8) in a new registry version |
+| `register_gateway(args)`, `deactivate_gateway()` | Manage the gateways allowed to sign ticket dispatches |
+| `withdraw_protocol_reserve(amount)` | Withdraw protocol fees and slashing proceeds, capped at the protocol's own reserve so node rewards and epoch pools stay out of reach |
+
+The program has no per-round settlement instruction, round receipt or escrow. For subscriptions, the gateway counts rounds off chain against the plan limits. For [x402](/access-models/x402), the payer's USDC goes directly to the treasury and the gateway enforces payment at admission.
+
+## Epoch settlement
+
+Nodes are paid per epoch from a pool, not per round. A small, unpredictable sample of rounds (tickets) measures who was selected and who signed.
+
+| Step | Rule |
+| --- | --- |
+| Ticket test | A round is a ticket when the first 8 bytes of `keccak256("MOLPHA_TICKET_V1" ‖ message ‖ s ‖ commitment)`, read big-endian, are below the epoch threshold `tau`. The hash covers the aggregate signature, so nobody can predict it before the round is signed |
+| Dispatch signature | The instruction before `submit_ticket` must be an Ed25519 verification of an active `Gateway` authority's signature over `keccak256("MOLPHA_DISPATCH_V1" ‖ program_id ‖ source_id ‖ u8(signatures_required) ‖ u32be(registry_version) ‖ u64be(timestamp))` |
+| Verification | `submit_ticket` verifies the attestation, re-derives the selection set and adds the selected and signing nodes to the epoch counters |
+| One ticket per round | The `TicketMarker` address derives from `keccak256("MOLPHA_TICKET_ID_V1" ‖ source_id ‖ u8(signatures_required) ‖ u64be(timestamp))`, so a round counts once whatever its signer subset |
+| Windows | The round's `timestamp / 1000` must fall inside the epoch window, the ticket must arrive before the epoch end plus its ticket grace, and the registry version must have been active at the round's own time |
+| Pool | `sweep_treasury_revenue` splits unswept treasury income: `protocol_fee_bps` goes to the protocol reserve, the rest to the open epoch's pool. Slashing proceeds are not swept |
+| Payout | After `finalize_epoch`, `credit_epoch_rewards` credits each node `floor(pool · weight / weight_total)`. Weight is the node's count of sampled signatures, or zero when its availability in the epoch is below the floor (`min_availability_bps`) |
+| Threshold | `finalize_epoch` sets `tau` for the epoch two ahead from the observed ticket count and `target_tickets_per_epoch`, moving it by at most 8× per step |
+
+The ticket labels are raw ASCII, not hashed. Other domain separators are listed in [Cryptography](/protocol/cryptography#domain-separators).
+
+## Deposits and punishments
+
+`register_node` moves `minimum_node_deposit` USDC from the node owner into a deposit vault owned by `RegistryState`, separate from the treasury. After `deactivate_node`, or after a tombstoning slash, the owner can withdraw what remains with `withdraw_node_deposit` once `withdrawal_cooldown_slots` have passed.
+
+Anyone can call `slash_offence` with evidence. The program validates it, applies the penalty to every guilty node, removes them from the registry in a new version and records a `PunishmentCase`.
+
+| Offence | Evidence | Slash | Membership |
+| --- | --- | --- | --- |
+| `Equivocation` | Two valid attestations for one round with different values | 100% | Tombstoned |
+| `UnsolicitedSigning` | A valid attestation with a signer outside the selection set | 100% | Tombstoned |
+| `CommitmentReuse` | One aggregate nonce commitment used for two different messages | 50% | Tombstoned |
+| `NonceReuse` | Two verifying partial signatures against one committed nonce pair | 100% | Tombstoned |
+| `Inactivity` | Availability below the floor in a finalized epoch | 0% | Frozen for one day |
+
+- The slash percentage applies to both the node's locked deposit and its unclaimed rewards.
+- The reporter receives `challenger_bounty_bps` of the slashed total. The rest goes to the protocol reserve.
+- A tombstoned node cannot return. A frozen node returns through `reinstate_node`.
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="Solana verifier" href="/verifiers/solana">Submit attestations and read `Feed` accounts.</Card>
+  <Card title="Security model" href="/protocol/security-model">Trust assumptions and slashing in context.</Card>
+  <Card title="Registry versions" href="/concepts/registry-versions">How node-set changes create new versions.</Card>
+</CardGroup>
