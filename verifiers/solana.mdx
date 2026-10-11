@@ -1,187 +1,151 @@
 ---
-title: "Solana Program"
-description: "Canonical settlement, feed accounts, subscriptions, payload submission, and direct Rust verification."
+title: "Verify on Solana"
+sidebarTitle: "Solana"
+description: "Read a verified Feed account, submit attestations, or verify them directly in Rust with molpha-verifier."
 ---
 
-Solana is Molpha's canonical settlement chain. It stores the node registry, plans, subscriptions, delegates, gateways, settlement records, agent escrows, and maintained `Feed` accounts.
+On Solana you can consume Molpha data three ways:
 
-## Network details
-
-| Item | Value |
+| Pattern | Use it when |
 | --- | --- |
-| Program name | `molpha` |
-| Program ID (devnet) | `MoLFGDpFoVnQgwbkTNScKPohCxhbfd61JjFrnotuwzh` |
-| Settlement asset | USDC SPL token from `ProtocolConfig.usdc_mint` |
-| Framework | Anchor |
+| [Read a `Feed` account](#read-a-feed) | Someone keeps a feed current and you want the latest value cheaply |
+| [Submit, then read](#submit-an-attestation) | You hold an attestation and want it on-chain as the feed's new value |
+| [Verify directly](#verify-directly-with-molpha-verifier) | Your program or service needs to check an attestation without writing a feed |
 
-## Account model
+Program ID: `MoLF3pgVA9MENSuEujxNNSMaTo71aLyewaH5nrWfUZs` on devnet (see [Deployments](/verifiers/deployments)). Accounts, instructions and epoch settlement are documented in [Solana program](/protocol/solana-program).
 
-| Account | Seeds | Purpose |
-| --- | --- | --- |
-| `ProtocolConfig` | `["molpha_config"]` | Global config, treasury, fees, USDC mint |
-| `RegistryState` | `["molpha_registry"]` | Current and previous registry metadata |
-| `Node` | `["molpha_node", index_le]` | Registered node slot |
-| `Plan` | `["molpha_plan", plan_type_u8]` | Subscription tier |
-| `Subscription` | `["molpha_subscription", owner]` | Subscriber state |
-| `Delegate` | `["molpha_delegate", owner, delegate]` | Delegated authority for subscription-backed rounds |
-| `Feed` | `["molpha_feed", feed_id]` | Latest verified value for a feed |
-| `Gateway` | `["molpha_gateway", gateway_authority]` | Bonded gateway operator |
-| `AgentEscrow` | `["molpha_agent", authority, gateway]` | x402 / self-funded agent escrow (lazy-created) |
-| `RoundReceiptRecord` | `["molpha_round", consumer_authority, api_config_hash, signatures_required, timestamp_le]` | Subscription / delegate round settlement receipt |
-| `RoundReceiptRecord` (agent) | `["molpha_agent_round", authority, gateway, api_config_hash, signatures_required, canonical_timestamp_le]` | Agent round settlement receipt |
+## Read a feed
 
-## Feed ID
+A `Feed` account holds the latest attestation one submitter wrote for a source and quorum. The program verified it before writing, so reading it is safe as long as you check the account's address and its age. Field meanings are in [Solana feed account](/concepts/feeds#solana-feed-account).
 
-```text
-feed_id = keccak256(
-  "MOLPHA_JOB_V1" ||
-  owner_pubkey ||
-  api_config_hash ||
-  signatures_required_u8
-)
+### From TypeScript
+
+```ts
+const feed = await sdk.solana.readFeed(sourceId, signaturesRequired, submitter);
+if (!feed) throw new Error("feed not created yet");
+
+const ageSeconds = Math.floor(Date.now() / 1000) - Math.floor(feed.timestamp.toNumber() / 1000);
+if (ageSeconds < 0 || ageSeconds > 60) throw new Error(`stale feed: ${ageSeconds}s`);
+// feed.value is the 32 signed bytes; decode with the source's encoding
 ```
 
-For subscription rounds, `owner` is the consumer authority. For agent rounds, `owner` is the agent payer/authority.
+`submitter` defaults to the SDK's wallet. To compute the address yourself, use `feedPda(deriveSourceId(apiConfig), signaturesRequired, submitter, MOLPHA_PROGRAM_ID)` from `@molpha/sdk` and fetch it with Anchor and `MOLPHA_IDL`.
 
-## `Feed` account
+### From your program
+
+Pass the `Feed` PDA into your instruction and constrain its seeds, so a caller can't substitute a look-alike account. Every field has a fixed size, so offsets after the 8-byte discriminator are constant.
 
 ```rust
-#[account]
-pub struct Feed {
-    pub feed_id: [u8; 32],
-    pub value: Vec<u8>,
-    pub value_kind: FeedValueKind,
-    pub canonical_timestamp: i64,
-    pub signatures_required: u8,
-    pub signers_bitmap: [u8; 32],
-    pub registry_version: u32,
-    pub bump: u8,
+use anchor_lang::prelude::*;
+
+pub const MOLPHA_PROGRAM_ID: Pubkey = pubkey!("MoLF3pgVA9MENSuEujxNNSMaTo71aLyewaH5nrWfUZs");
+
+#[derive(Accounts)]
+#[instruction(source_id: [u8; 32], signatures_required: u8, submitter: Pubkey)]
+pub struct UseMolphaFeed<'info> {
+    /// CHECK: constrained to the canonical Molpha feed PDA below.
+    #[account(
+        seeds = [b"molpha_feed", source_id.as_ref(), &[signatures_required], submitter.as_ref()],
+        bump,
+        seeds::program = MOLPHA_PROGRAM_ID,
+    )]
+    pub molpha_feed: AccountInfo<'info>,
+}
+
+pub fn use_molpha_feed(ctx: Context<UseMolphaFeed>, _source_id: [u8; 32], _k: u8, _submitter: Pubkey) -> Result<()> {
+    // Layout after the discriminator:
+    // source_id[32] | value[32] | value_kind:u8 | submitter[32] | timestamp:u64 LE
+    // | signatures_required:u8 | signers_bitmap[32] | registry_version:u32 LE | bump:u8
+    const VALUE: usize = 8 + 32;
+    const TIMESTAMP: usize = VALUE + 32 + 1 + 32;
+
+    let data = ctx.accounts.molpha_feed.try_borrow_data()?;
+    require!(data.len() >= TIMESTAMP + 8, MyError::InvalidFeed);
+
+    let value = &data[VALUE..VALUE + 32];
+    let timestamp_ms = u64::from_le_bytes(data[TIMESTAMP..TIMESTAMP + 8].try_into().unwrap());
+    let age = Clock::get()?.unix_timestamp - (timestamp_ms / 1000) as i64;
+    require!((0..=60).contains(&age), MyError::StaleData);
+
+    let _ = value; // decode per your source's encoding
+    Ok(())
 }
 ```
 
-`value` stores the raw payload when it is 32 bytes or smaller. Longer payloads up to 256 bytes are stored as a keccak hash and marked with `FeedValueKind::Hash`.
+Account integers are little-endian Borsh. For typed access, use Anchor's `declare_program!` with the Molpha IDL.
 
-## Main instructions
+## Submit an attestation
 
-| Instruction | Who | Purpose |
-| --- | --- | --- |
-| `subscribe(plan_type)` | Subscriber | Open a monthly USDC subscription |
-| `extend_subscription()` | Subscriber | Add one month and top up prepaid balance |
-| `add_delegate(args)` / `remove_delegate(args)` | Subscriber | Manage delegated authorities |
-| `settle_round_receipt(args)` | Gateway | Settle a subscription-backed round (writes a receipt, not the `Feed`) |
-| `settle_agent_round(args)` | Gateway | Settle an x402 agent round (writes a receipt, not the `Feed`) |
-| `finalize_round()` | Anyone | Finalize a settled receipt after the dispute window |
-| `dispute_round(agg_sig)` | Anyone | Challenge a settled receipt with a verifying aggregate signature |
-| `submit_data_update(args)` | Anyone | Verify a signed payload and write it to the `Feed` |
+`submit_attestation` is permissionless: any keeper, backend or user can submit, and the program verifies before writing. Each submitter writes its own `Feed`, created on the first submit.
 
-Only `submit_data_update` creates or updates the `Feed` account (`init_if_needed`). Settlement instructions write `RoundReceiptRecord` accounts for payment and dispute accounting; they do not write the feed value.
-
-## Submit payload
-
-```rust
-pub struct SubmitDataUpdateArgs {
-    pub feed_id: [u8; 32],
-    pub registry_version: u32,
-    pub value: Vec<u8>,
-    pub canonical_timestamp: i64,
-    pub signatures_required: u8,
-    pub agg_sig_s: [u8; 32],
-    pub commitment_addr: [u8; 20],
-    pub signers_bitmap: [u8; 32],
-}
+```ts
+const { signature, feed } = await sdk.solana.submitAttestation(attestation);
 ```
 
-Checks:
+The program accepts the write only if:
 
-- Full Schnorr verification through `molpha_verifier`.
-- Signer bitmap is resolved against the requested registry version.
-- New feed values must have a strictly newer `canonical_timestamp`.
-- Value is encoded according to `Feed::encode_stored_value`.
+- the registry version is current, or superseded but still inside its grace period;
+- `timestamp / 1000` is within the settlement window and no more than 60 seconds ahead of the cluster clock;
+- `signaturesRequired` is at least the protocol `min_signers`;
+- the signers are inside the derived selection set and the aggregate signature verifies;
+- for an existing feed: the same quorum, a strictly newer `timestamp`, and a registry version no older than the stored one;
+- with `raw_value`: at most 256 bytes and hashing to the signed value.
 
-## Direct verification with `molpha-verifier`
+Accounts are the submitter (payer), the `Registry` PDA for the payload's version, the `Feed`, `ProtocolConfig` and the system program, then one signer `Node` account per set bit of `signersBitmap` in ascending bit order. A legacy transaction fits up to 19 signers; larger sets need a v0 transaction with an address lookup table. To submit several attestations of one feed in one transaction, use [`submitAttestations`](/sdk/reference#batch-submit).
 
-Use the Rust crate when you want to verify a signed payload without writing through `submit_data_update`.
+## Verify directly with molpha-verifier
+
+The [`molpha-verifier`](https://crates.io/crates/molpha-verifier) crate is the same verification code the program uses, without the program around it.
 
 ```toml
 [dependencies]
-molpha-verifier = "0.2"
+molpha-verifier = "0.3.0"
+# features: "borsh", "anchor" (Attestation as an instruction argument), "solana" (account readers)
 ```
 
-High-level APIs:
-
-| Function | Use when |
+| Function | Use it when |
 | --- | --- |
-| `verify_data_update` | You already resolved signer `(x, y)` pubkeys |
-| `verify_data_update_compressed` | You already resolved compressed signer pubkeys |
-| `verify_data_update_resolved` | You have `RegistryView` and `NodeEntry` values |
-| `verify_aggregate_over_hash` | Dispute path over an arbitrary hash |
+| `verify` | You already resolved the signers' `(x, y)` keys, in ascending bitmap order |
+| `verify_attestation_resolved` | You have a `RegistryView` and one `NodeEntry` per signer |
+| `solana::verify_attestation` | You have the `Registry` and signer `Node` accounts as `AccountInfo` (feature `solana`) |
+| `verify_aggregate_over_hash` | You verify an aggregate signature over an arbitrary message hash |
 
-For Solana-program integrations, the caller must owner-check and deserialize registry/node accounts, copy them into plain `RegistryView` / `NodeEntry` values, then pass them to `verify_data_update_resolved`.
+Each has a `*_with_coalition_key` variant that takes the precomputed sum of the signer keys; `coalition_key(&signers)` computes it.
 
 ```rust
-use molpha_verifier::{
-    verify_data_update_resolved, DataUpdate, NodeEntry, RegistryView,
-};
+use molpha_verifier::{verify_attestation_resolved, Attestation, NodeEntry, RegistryView};
 
-verify_data_update_resolved(
-    &payload,
-    &registry_view,
-    redundancy_buffer,
-    clock_unix_timestamp,
-    &node_entries,
-)?;
+verify_attestation_resolved(&attestation, &registry_view, &node_entries)?;
 ```
 
-The crate is pure verification logic. It does not perform account I/O, owner checks, or Anchor/Pinocchio account validation.
+What the crate leaves to you:
 
-## PDA derivation reference
+- **Quorum.** It does not reject `signaturesRequired = 0`. Enforce your own minimum.
+- **Time.** It takes no clock: no freshness, registry activation or grace-period checks.
+- **Replay.** It keeps no state.
+- **Accounts.** With default features it reads no accounts: you owner-check and deserialize them and order the node entries. With feature `solana`, `solana::verify_attestation` checks the owner, discriminator and length of the `Registry` and `Node` accounts and binds each signer to its registry position; you still check that the registry account is the PDA for the payload's version.
 
-```ts
-import { web3 } from "@anchor-lang/core";
+## Errors
 
-const PROGRAM_ID = new web3.PublicKey("MoLFGDpFoVnQgwbkTNScKPohCxhbfd61JjFrnotuwzh");
+Common errors from `submit_attestation`:
 
-const findFeed = (feedId: Uint8Array) =>
-  web3.PublicKey.findProgramAddressSync(
-    [Buffer.from("molpha_feed"), Buffer.from(feedId)],
-    PROGRAM_ID
-  )[0];
-
-const findSubscription = (owner: InstanceType<typeof web3.PublicKey>) =>
-  web3.PublicKey.findProgramAddressSync(
-    [Buffer.from("molpha_subscription"), owner.toBuffer()],
-    PROGRAM_ID
-  )[0];
-
-const findAgentEscrow = (
-  authority: InstanceType<typeof web3.PublicKey>,
-  gateway: InstanceType<typeof web3.PublicKey>,
-) =>
-  web3.PublicKey.findProgramAddressSync(
-    [Buffer.from("molpha_agent"), authority.toBuffer(), gateway.toBuffer()],
-    PROGRAM_ID
-  )[0];
-```
-
-## Consumer responsibilities
-
-- Validate the `Feed` PDA from `["molpha_feed", feed_id]`.
-- Enforce freshness with `canonical_timestamp`.
-- Decode `value` according to the feed schema.
-- Use `submit_data_update` before reading, or verify supplied payloads directly with `molpha-verifier`.
-- Treat gateway and escrow status reads as advisory until settlement finalizes.
-
-## Consumer-relevant errors
-
-| Error | Meaning |
-| --- | --- |
-| `SubscriptionNotActive` | Subscription expired or missing |
-| `SubscriptionInactiveOrExhausted` | Subscription expired or round quota exhausted (settlement path) |
-| `SignaturesExceedSubscriptionMax` | Requested quorum exceeds `subscription.max_signers` |
-| `SignaturesExceedDelegateMax` | Requested quorum exceeds `delegate.max_signers` |
-| `FeedNotNewer` | Submitted timestamp is not newer than stored timestamp |
-| `InvalidRegistryVersion` | Payload registry version is not accepted |
-| `InsufficientSigners` | Signer bitmap has fewer signers than quorum |
-| `InvalidAggregateSignature` | Schnorr verification failed |
-| `MissingSignerAccount` | Remaining accounts do not match signer bitmap |
-| `InvalidValueLength` | Submitted value exceeds `Feed::MAX_VALUE_LEN` (256) |
+| Error | Code | Meaning |
+| --- | --- | --- |
+| `ConstraintSeeds` | 2006 | An account (for example the `Registry` for the wrong version) is not the expected PDA |
+| `FeedNotNewer` | 6030 | `timestamp` is not newer than the stored one |
+| `SignaturesRequiredMismatch` | 6031 | Quorum differs from the feed's quorum |
+| `RegistryVersionMismatch` | 6056 | Registry version is older than the feed's |
+| `RegistryNotActive` | 6011 | Registry version is not active at cluster time |
+| `InvalidRegistryVersion` | 6010 | The verifier found a registry version or account mismatch |
+| `AttestationTooStale` | 6059 | `timestamp` is older than the settlement window |
+| `AttestationInFuture` | 6060 | `timestamp` is too far ahead of the cluster clock |
+| `SignaturesBelowMinSigners` | 6027 | Quorum is below the protocol `min_signers` |
+| `QuorumBelowThreshold` | 6034 | Fewer signers than the quorum |
+| `CreditedExceedsSelection` | 6043 | More signers than the selection allows |
+| `MissingSignerAccount` | 6032 | A signer `Node` account is missing or can't be read |
+| `InvalidNodeAccount` | 6004 | A signer `Node` account doesn't match its registry position |
+| `UnexpectedSignerAccounts` | 6076 | More remaining accounts than signers |
+| `SignersNotSubsetOfSelection` | 6028 | A signer is outside the selection set |
+| `InvalidCoalitionKey` | 6077 | `coalition_key` is not the sum of the signer keys |
+| `InvalidAggregateSignature` | 6029 | Schnorr verification failed |
+| `InvalidRawValue` | 6044 | `raw_value` is over 256 bytes or doesn't hash to the signed value |

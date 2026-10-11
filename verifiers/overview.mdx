@@ -1,29 +1,53 @@
 ---
-title: "Verifier Overview"
-description: "One signed payload, three VM families. Identical verification pipeline everywhere."
+title: "Verify attestations"
+sidebarTitle: "Overview"
+description: "One attestation, three verifier implementations: what each checks and what stays your responsibility."
 ---
 
-Every Molpha verifier runs the **same** [verification pipeline](/protocol/cryptography#the-verification-pipeline) over the same domain-separated hashes: derive the selection set from `(feedId, registryVersion, canonicalTimestamp)`, reconstruct the coalition key as the plain EC sum of the actual signers, and check one Schnorr signature over the canonical message. No `chainId` is in the message — that is what makes a single signature valid on every chain.
+Every Molpha verifier runs the same [verification pipeline](/protocol/cryptography#the-verification-pipeline) over the same bytes: re-derive the round's selection set, add up the public keys of the nodes that signed, and check one Schnorr signature over the [signed message](/concepts/attestations#the-signed-message). The message has no `chainId`, which is why one attestation verifies everywhere.
 
-## The three implementations
+## Pick your chain
 
-| | Solana | EVM | Starknet |
-|---|---|---|---|
-| Role | Canonical settlement + Rust verifier crate | Stateless verifier | Stateless verifier |
-| Entrypoint | `submit_data_update` writes the `Feed`; `molpha-verifier` verifies directly in Rust | `verify(dataUpdate, schnorrData) → bool` (`view`) | `verify(data_update, schnorr_data) → bool` |
-| Node-key storage | `Node` PDAs (`molpha_node`) | SSTORE2 snapshot per version | per-`(version, index)` coordinate maps |
-| Schnorr final check | `molpha-verifier` uses the EVM-compatible Schnorr→ECDSA recovery path | `ecrecover` trick (recovers `s·G − e·P`) | native secp256k1 syscalls, computes `s·G + (Q−e)·P` |
+| | [Solana](/verifiers/solana) | [EVM](/verifiers/evm) | [Starknet](/verifiers/starknet) |
+| --- | --- | --- | --- |
+| Entry point | `submit_attestation` writes a `Feed` account; the `molpha-verifier` crate verifies in Rust | `verify(attestation, maxAge) → (bool, uint8)` | `verify(attestation, max_age) → (bool, u8)` |
+| State | Canonical registry, feeds, subscriptions | Mirror of node keys only | Mirror of node keys only |
+| On rejection | Instruction fails with an error code | Returns `(false, code)`, never reverts | Returns `(false, code)`, never panics |
+| Freshness | Program enforces a window; crate takes no clock | Optional `maxAge` (seconds) | Optional `max_age` (seconds) |
 
-The Starknet contract is a bit-for-bit port of the EVM pipeline, proven by parity tests that verify **unmodified EVM-produced signatures** on Cairo.
+The Starknet verifier is a port of the EVM pipeline, and parity tests check that unmodified EVM-produced signatures verify on Cairo.
 
-## What every verifier enforces
+## What the verifiers check
 
-1. The `registryVersion` exists and has nodes.
-2. Structural guards: non-zero `signaturesRequired`, `signersBitmap`, `signature`, `commitment`.
-3. `popcount(signersBitmap) >= signaturesRequired`.
-4. Signers ⊆ the deterministically derived selection set (`groupSize = min(signaturesRequired + redundancyBuffer, nodeCount)`).
-5. The aggregate Schnorr signature over the canonical message.
+| Check | EVM / Starknet `verify` | Solana `submit_attestation` | `molpha-verifier` crate |
+| --- | :-: | :-: | :-: |
+| Registry version exists and has nodes | ✓ | ✓ | ✓ (caller supplies the registry) |
+| Non-zero `signaturesRequired` | ✓ | ✓ (at least the protocol `min_signers`, never below 3) | — |
+| Signer count ≥ `signaturesRequired` | ✓ | ✓ | ✓ |
+| Signers inside the derived selection set | ✓ | ✓ | ✓ |
+| Aggregate Schnorr signature | ✓ | ✓ | ✓ |
+| Signature scalar in range | ✓ | ✓ | ✓ |
+| Registry version still accepted at the round's time | ✓ (60 s grace after a successor activates) | ✓ (grace period at cluster time) | — |
+| Freshness | When `maxAge` > 0 | Always (settlement window) | — |
+| Newer than the last accepted value | — | ✓ (per feed) | — |
 
-## What no verifier enforces
+<Warning>
+The `molpha-verifier` crate accepts `signaturesRequired = 0`. If you call the crate directly, enforce your own minimum quorum before trusting the result.
+</Warning>
 
-Freshness, replay protection, and value bounds. A valid payload verifies forever (historical registry versions are intentionally kept verifiable). These policies belong to the consumer — see the integration checklists in each chain guide.
+## Consumer checklist
+
+Verification proves that enough selected nodes from the named registry version signed exactly this payload. Everything else is your policy:
+
+1. **Check the result.** On EVM and Starknet, `verify` returns `(false, code)` instead of reverting. Ignore the `bool` and you accept unverified data.
+2. **Pin the source.** Compare `sourceId` with the source you expect.
+3. **Require a minimum quorum.** `signaturesRequired >= MIN`, never `==`. Whoever requests a round chooses its quorum.
+4. **Enforce freshness.** Pass a non-zero `maxAge`, or compare `timestamp / 1000` with your clock. `timestamp` is in milliseconds.
+5. **Prevent replay** where it matters. No verifier records consumed attestations; a Solana `Feed` only accepts newer timestamps.
+6. **Decode and bound the value.** `value` is 32 opaque bytes until you decode it with the source's encoding.
+7. **Pick the feed you trust** on Solana. Each submitter writes its own `Feed` account; validate its address and choose the submitter.
+8. **Don't trust delivery.** A gateway response, an MCP summary or a relayer proves nothing until a verifier has checked the attestation.
+
+## Addresses
+
+Program ID and verifier addresses for each network are on [Deployments](/verifiers/deployments).

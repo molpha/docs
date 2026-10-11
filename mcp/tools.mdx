@@ -1,0 +1,100 @@
+---
+title: "MCP tool reference"
+sidebarTitle: "Tool reference"
+description: "Inputs, outputs, providers, paid sources and error codes for every Molpha MCP tool."
+---
+
+Every tool declares an `outputSchema`, returns `structuredContent` (with the same JSON in a text block), and carries MCP annotations so clients can decide what needs confirmation. Which tools a server offers depends on how it runs: see [Choose an integration](/mcp/overview#choose-an-integration).
+
+## Read tools
+
+| Tool | Key inputs | Returns |
+| --- | --- | --- |
+| `get_capabilities` | — | `runLevel`, program ID, registry version, nodes, gateways, chains, verifier addresses, x402 caps, source-payment policy |
+| `derive_source_id` | `apiConfig`, `rejectNonDeterministic?` | `sourceId`, the `canonicalJson` it hashes, determinism warnings. Runs locally. |
+| `describe_feed` | `sourceId` or `apiConfig`, `signaturesRequired`, `submitter` | The Solana `Feed` (or `null` before the first submit) and the wallet's subscription status |
+| `get_latest_value` | `sourceId`, `signaturesRequired`, `submitter` | The latest stored value of a feed |
+| `describe_access` | `address`, `owner?` | `role` (`owner`, `delegate`, `none`), plan and delegate limits, whether it can request rounds |
+| `get_x402_status` | `signaturesRequired`, `payer` | Next round price, payee (protocol treasury), pending tickets, payer's USDC balance and remaining daily budget |
+| `build_verifier_calldata` | `attestation` (from a round result), `chain`, `maxAge?` | EVM or Starknet verifier address and `verify()` arguments. Calldata only: it verifies nothing. |
+| `list_providers`, `get_provider` | `provider`, `flow?`, `feed?` | Integrated data providers and their ready-made feeds |
+| `quote_source_payment` | `apiConfig`, `signaturesRequired` | Price of a paywalled source, the nodes that may fetch it, and the worst case |
+
+On a local server with a signer, `submitter` and `payer` default to the server's wallet. On the hosted server, pass them.
+
+## Round tools
+
+`execute_subscription_round` and `execute_x402_round` take the same core inputs:
+
+| Input | Meaning |
+| --- | --- |
+| `apiConfig` | The source. See [API config](/concepts/feeds#api-config). |
+| `signaturesRequired` | Quorum. Pass at least `3`, the network minimum. The schema default of `1` is rejected by the gateway. |
+| `chains` | Required. One or more of `evm`, `starknet`, `solana`: the chains to build verifier arguments for. |
+| `sourceId` | Optional guard: the round is refused unless `apiConfig` derives to this value. |
+| `maxAge` | Optional freshness window in seconds, used in the verifier arguments. |
+| `autoSubmit` | Local only. Also submit to Solana; requires `"solana"` in `chains`. |
+| `dryRun` | Local only. Preview without signing, paying or submitting. |
+
+`execute_subscription_round` also accepts `encryptSecrets` (local only) and `sourcePayment.maxSpendUsdc` for [paid sources](#providers-and-paid-sources). On the hosted server it takes a `sessionToken`, and x402 rounds go through `prepare_x402_round` first: see [Hosted MCP](/mcp/hosted).
+
+### Output
+
+| Field | Meaning |
+| --- | --- |
+| `attestation.payload` | The signed payload: `value` (the signed 32 bytes, hex), `sourceId`, `registryVersion`, `signaturesRequired`, `timestamp` (unix ms) |
+| `attestation.signature` | `signature` (aggregate `s`), `commitment`, `signersBitmap` |
+| `value` | Decimal rendering of `attestation.payload.value`. Not signed on its own. |
+| `fresh` | Whether the value was fetched in this round. Not signed. |
+| `verifierArgs` | Ready-made arguments for each chain in `chains` |
+| `paymentReceipt` | x402 only: the settled USDC payment |
+| `submitted` | With `autoSubmit`: the Solana submit result, or the error. A failed submit keeps the signed artifact for a retry. |
+
+`attestation` has the same shape as in the gateway's round response. `submit_attestation` accepts this output unchanged, and `build_verifier_calldata` takes its `attestation`. Field meanings are explained in [Rounds and attestations](/concepts/attestations).
+
+### Timing and retries
+
+Rounds run on a 100 ms tick ([round timing](/concepts/attestations#round-timing)). A second request for the same source and quorum inside one tick gets HTTP 409; the x402 and hosted subscription tools retry it once a tick later, then fail with `round_conflict`. Nothing else is retried automatically, because every retry is a new round that spends again.
+
+## Write tools
+
+| Tool | Where | What it does |
+| --- | --- | --- |
+| `submit_attestation` | Local | Writes a round result to the signer's Solana `Feed`. Resubmitting the same result changes nothing: the program only accepts a newer timestamp. |
+| `prepare_submit_attestation` → `send_signed_transaction` | Hosted | The same write, signed by your wallet |
+| `prepare_x402_round` → `execute_x402_round` | Hosted | An x402 round paid by a USDC transfer your wallet signs |
+| `begin_session` → `complete_session` | Hosted | Sign in for subscription rounds |
+
+## Providers and paid sources
+
+A gateway can integrate data providers. A provider entry lists its access flows and **ready-made feeds**, each with a complete `apiConfig` and `sourceId`.
+
+- **`api_key` flow.** Molpha holds the provider key; you pay nothing extra and send nothing extra. Pass the feed's `apiConfig` unchanged to a round tool with `signaturesRequired` of at least 3. Any change moves the `sourceId` and is refused on the provider's host.
+- **`x402` flow.** You pay the provider per node fetch. Call `quote_source_payment`, then `execute_subscription_round` with `sourcePayment: { maxSpendUsdc }`. The payer pays the source directly; Molpha never receives that payment, and it does not replace the payment for the round itself.
+
+Paying sources is off by default and local only. It needs `MOLPHA_SOURCE_PAYER_KEY` (an EVM key) and an allowlist in `MOLPHA_SOURCE_PAYMENT_NETWORKS`, and it is bounded by `sourcePayment.maxSpendUsdc` and the per-round and daily caps. Without authorization a paywalled source fails with `source_payment_required` and its quote. Paid sources cannot be combined with `encryptSecrets`.
+
+Describe provider values as attested provider quotes: Molpha attests what the endpoint returned, not that the price is correct.
+
+## Errors
+
+| Code | Meaning | What to do |
+| --- | --- | --- |
+| `dry_run_locked` | `MOLPHA_DRY_RUN=true` and the call asked to go live | Change the server config, not the call |
+| `guardrail_exceeded` | A price or daily cap would be exceeded | Raise the cap deliberately, or wait for the reset |
+| `invalid_request` | The gateway rejected the request (HTTP 400) | Fix the input; check `registryVersion` and quorum |
+| `unauthorized` | Request signature rejected (HTTP 401) | Check that the signer is the subscription owner or a delegate |
+| `forbidden` | No active subscription, out of quota, or no delegate access (HTTP 403) | Check `describe_access` |
+| `payment_required` | The gateway rejected an x402 payment (HTTP 402) | Check balance and caps with `get_x402_status` |
+| `payment_outcome_unknown` | The payment was sent but the result is unclear | Do not pay again yet: look for the payment's memo in your USDC account first |
+| `round_conflict` | Already a round for this source and quorum in this tick (HTTP 409) | Wait at least 100 ms and call again |
+| `round_timeout` | The round did not complete (HTTP 503 or timeout) | Wait, read state, then call again |
+| `determinism_rejected` | `derive_source_id` with `rejectNonDeterministic` found a non-deterministic config | Pin the parser or use tolerance mode |
+| `source_payment_required`, `source_payment_refused`, `source_payment_disabled` | Paywalled source not authorized, over a cap, or payment not configured | See [paid sources](#providers-and-paid-sources) |
+| `sessions_unavailable` | The gateway has sign-in sessions disabled | Use x402 rounds |
+| `invalid_signature`, `invalid_challenge`, `sign_in_rejected`, `session_invalid` | Sign-in failed or expired | See [Hosted MCP](/mcp/hosted#errors) |
+| `payment_expired`, `transaction_expired`, `signed_transaction_mismatch` | A prepared transaction lapsed or was altered | Prepare again |
+| `subscription_inactive` | The signer's subscription is missing or expired | Check `describe_access`, or use x402 |
+| `authentication_required` | The operation needs a signer or a session | Configure a signer, or sign in with `begin_session` |
+| `submitter_required` | A hosted read needs a wallet address | Pass `submitter` or `payer` |
+| `missing_config`, `invalid_config` | Server configuration is incomplete | Run `npx -y @molpha/mcp doctor` |

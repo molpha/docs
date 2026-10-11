@@ -1,45 +1,51 @@
 ---
-title: "Releases & Roadmap"
-description: "Shipped milestones and what's next. Molpha releases are codenamed after Carpathian peaks, A → Z."
+title: "Releases and roadmap"
+sidebarTitle: "Releases"
+description: "What shipped in each Molpha release and what comes next. Releases are named after Carpathian peaks, A to Z."
 ---
 
 ## Roadmap
 
-| Milestone | Status | Scope |
-|---|---|---|
-| **Albyn** (A1) | ✅ Shipped — June 2026 | Full signing/verification flow end-to-end; [`@molpha-oracle/sdk` v0.3.2](https://www.npmjs.com/package/@molpha-oracle/sdk); verifiers on five testnets. |
-| **Brebeneskul** (A2) | ✅ Current — Devnet | Agent-ready economic layer: subscriptions, Delegates, x402 escrow, gateway settlement + dispute/finalize, node staking, reward accounting; Solana program `MoLFGDpFoVnQgwbkTNScKPohCxhbfd61JjFrnotuwzh`. |
-| **Chivchyn (A3)** | Planned | Registry versioning and historical validation on Solana — the prerequisite for dispute adjudication — then broader slashing economics and operator evidence beyond the existing `dispute_round` path. |
-| **Dzembronia (A4)** | Planned | Mainnet GA: full protocol audit; deployment on Solana mainnet-beta, Starknet, and one EVM chain. Node set remains permissioned. |
-| **A5** | Planned | Permissionless node-provider onboarding. |
+| Release | Status | Scope |
+| --- | --- | --- |
+| **Albyn** (A1) | Shipped, June 2026 | End-to-end signing and verification; verifiers on five testnets; first SDK |
+| **Brebeneskul** (A2) | Shipped, July 2026 | Economic layer: USDC subscriptions, delegates, x402 pay-per-request, node deposits and rewards |
+| **Chivchyn** (A3) | **Current**, October 2026 | Source-based attestations, versioned registry, epoch rewards, evidence-based slashing, 100 ms round grid, hosted MCP with wallet sign-in |
+| **Dzembronia** (A4) | Next | Audit readiness: authority and access-control redesign, cross-chain registry synchronization, provider-signed data, subscription credits, monitoring and hardening |
+| Mainnet | After A4 | External audit, then deployment on Solana mainnet, Starknet and an EVM chain. The node set stays permissioned, run by independent operators. |
 
-## Changelog
+Future scope and order can change.
 
-### SDK v0.1.0 — current
+## Chivchyn (A3)
 
-- Package published as [`@molpha/sdk`](https://www.npmjs.com/package/@molpha/sdk) (renamed from `@molpha-oracle/sdk`).
-- Gateway/SDK methods: `MolphaGateway.requestSignedData`, `MolphaSDK.requestAndSubmit` (formerly `execute` / `executeAndSubmit`).
-- Types: `RequestSignedDataOptions`, `RoundContext` (formerly `ExecuteOptions` / `ExecuteContext`).
-- Peer dependencies: `@anchor-lang/core`, `bn.js`. Default gateway: `https://dev-gateway.molpha.io/`.
-- Requires Node.js `>=20.19.0`.
+**Protocol**
+- A source is identified only by its `sourceId`, the hash of its canonical API config. There is no feed registration; `submit_attestation` creates a `Feed` per source, quorum and submitter on first write.
+- The signed object is an `Attestation`: payload plus aggregate signature, with a 141-byte signed message.
+- Every registry change creates an immutable snapshot; a superseded version stays valid for a grace period.
+- Round timestamps are unix milliseconds on a fixed 100 ms grid assigned by the gateway; requests for one source and quorum in the same tick share a round.
+- Median tolerance mode for numeric sources that move between fetches.
 
-### Albyn (A1) — June 2026
+**Economics**
+- Rewards are paid per epoch from a pool funded by subscriptions and x402 payments, using sampled rounds (tickets) as participation evidence. There is no per-round settlement.
+- x402 payments go straight to the protocol treasury; there is no escrow account.
+- Nodes post a USDC deposit. `slash_offence` punishes equivocation, unsolicited signing, commitment reuse and nonce reuse with on-chain evidence, and freezes inactive nodes.
 
-First public testnet release.
+**Developer tools**
+- SDK: `requestSignedData`, `requestAndSubmit`, batch submits (`submitAttestations`) and `requestMany`.
+- EVM and Starknet verifiers: `verify(attestation, maxAge)` returns `(success, code)` and never reverts on rejection.
+- MCP server: hosted at `mcp.molpha.io` with Sign-In-With-X sessions and wallet-signed x402 payments, or local over stdio.
+- Integrated data providers and x402-paywalled API sources.
 
-- [`@molpha-oracle/sdk`](https://www.npmjs.com/package/@molpha-oracle/sdk) v0.3.2 published: full consumer flow (subscribe → derive feed → execute round → submit update → read feed), `buildEvmVerifierArgs`, `buildStarknetVerifierArgs`.
-- Solana program live on Devnet (`MoLFeTRpDZgckPjjbLwW1wB9n85bQiqboPnvw9RwoG8`): registry, USDC plans/subscriptions, maintained `Feed` accounts, permissionless `submit_data_update`, and direct Rust verification through `molpha-verifier`.
-- EVM verifiers deployed on Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji, BSC testnet.
-- Starknet verifier deployed on Starknet Sepolia, with cross-chain parity tests accepting unmodified EVM-produced signatures.
+**Deployments**: Solana program `MoLF3pgVA9MENSuEujxNNSMaTo71aLyewaH5nrWfUZs` on devnet; EVM verifier `0xA6e49A3A1caf3E110cC04765B934C8FF118C2568` on Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji and BNB Chain testnet; Starknet verifier `0x032b9f47f12189668b94a5d62fb7d60f968ed0dbaf22090649d1d7a91d79cc38` on Sepolia. Packages: `@molpha/sdk` 0.2.0 and `molpha-verifier` 0.3.0. See [Deployments](/verifiers/deployments).
 
-See current addresses and live/not-yet-implemented status in [Deployments & Testnet Status](/verifiers/deployments).
+## Brebeneskul (A2)
 
-### Brebeneskul (A2) — July 2026
+- USDC plans and subscriptions, delegates for agent keys, and x402 pay-per-request.
+- Gateway settlement with dispute and finalize windows, node staking and reward accounting.
+- Solana program `MoLFGDpFoVnQgwbkTNScKPohCxhbfd61JjFrnotuwzh`.
 
-Current Solana program release on Devnet.
+## Albyn (A1)
 
-- Solana program ID: `MoLFGDpFoVnQgwbkTNScKPohCxhbfd61JjFrnotuwzh`.
-- Lazy `Feed` accounts via `submit_data_update` only; variable-length `value` with `FeedValueKind`.
-- Subscription + agent settlement (`settle_round_receipt`, `settle_agent_round`), `finalize_round`, `dispute_round`, node staking, and reward accounting/claims.
-- x402 escrow PDA `["molpha_agent", authority, gateway]`; Delegates for subscription-backed agents.
-- Docs re-architecture around agents, access models, gateways, and verifiers.
+- First public testnet release: full signing and verification flow.
+- Solana program `MoLFeTRpDZgckPjjbLwW1wB9n85bQiqboPnvw9RwoG8`; EVM verifiers on Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji and BSC testnet; Starknet verifier on Sepolia with cross-chain parity tests.
+- SDK published as `@molpha-oracle/sdk`, later renamed `@molpha/sdk`.

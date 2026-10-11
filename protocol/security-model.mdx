@@ -1,32 +1,81 @@
 ---
-title: "Security Model"
-description: "What verification guarantees, what it doesn't, and the current testnet trust assumptions."
+title: "Security model"
+description: "What verifying an attestation proves, what it does not, and who you trust when you use Molpha."
 ---
 
-## What a successful `verify()` proves
+This page is the single reference for Molpha's trust model: what a successful verification guarantees, what stays your responsibility, and which parties you rely on. Read it before you put value behind an attestation.
 
-- At least `signaturesRequired` keys from the referenced `registryVersion` signed the payload.
-- Every signer is inside the deterministic selection set for the round.
-- The aggregate Schnorr signature is valid for the exact `DataUpdate`.
+<Warning>
+Molpha runs on Solana devnet and EVM and Starknet testnets. No external audit has been completed, and mainnet is gated on one. Do not secure production value with it yet.
+</Warning>
+
+## What a successful verification proves
+
+- At least `signaturesRequired` registered nodes of the payload's `registryVersion` signed it.
+- Every signer is inside the deterministic selection set for the round's source, registry version and second.
+- The aggregate Schnorr signature is valid for exactly this payload and signer bitmap.
+- The registry version was acceptable for the payload: active, or inside its grace period. See [Registry versions](/concepts/registry-versions).
 
 ## What it does not prove
 
-- That `feedId`, `value`, or `canonicalTimestamp` correspond to genuine Solana feed state — stateless verifiers store no feed state. That guarantee is economic: honest selected nodes only sign messages matching the canonical Solana feed they observe. Solana remains the source of truth for feed validity.
-- Freshness or non-replay. Historical registry versions remain verifiable forever, by design. Consumers must enforce `maxStaleness` against `canonicalTimestamp` and track consumed payloads where replay matters.
+| Not proven | Why | What you do |
+| --- | --- | --- |
+| That `value` is what the API returned | Verifiers check signatures, not data. Honesty is backed economically by node deposits and slashing (below) | Choose a quorum that matches the value at risk; enforce a minimum `signaturesRequired` |
+| Freshness | EVM and Starknet check age only when `maxAge` is non-zero; the `molpha-verifier` crate takes no clock. Solana `submit_attestation` enforces its own window | Pass `maxAge` or check `timestamp / 1000` yourself |
+| Non-replay | No verifier tracks consumed attestations. A Solana `Feed` only accepts a strictly newer `timestamp` | Track used attestations where replay matters |
+| That a gateway response is valid | A gateway response is unverified data | Verify the attestation before you act on it |
+
+The full list is in the [consumer checklist](/verifiers/overview#consumer-checklist).
 
 ## Defenses in the design
 
 | Threat | Defense |
-|---|---|
-| Rogue-key attack on plain-sum aggregation | Mandatory Schnorr proof-of-possession at registration, per deployment |
-| Signer-set forgery | `signersBitmap` is bound inside the signed message; coalition key recomputed from the registry snapshot |
-| Selection grinding | Selection seed derived only from `(feedId, registryVersion, canonicalTimestamp)`; verifiers re-derive and enforce subset |
-| Cross-context / cross-feed reuse | Message binds `feedId`, `canonicalTimestamp`, `signersBitmap`, `value` |
-| Unauthorized feed writes on Solana | `submit_data_update` re-verifies the aggregate signature on every write; monotonic `canonical_timestamp` |
-| Look-alike feed accounts | Consumers validate the `Feed` PDA with `seeds::program = MOLPHA_PROGRAM_ID` |
+| --- | --- |
+| Rogue-key attack on plain-sum aggregation | Schnorr [proof of possession](/protocol/cryptography#proof-of-possession) at registration, per deployment |
+| Signer-set forgery | `signersBitmap` is inside the signed message; the verifier recomputes the coalition key from the registered keys of exactly those signers |
+| Caller-chosen signers | Every verifier re-derives selection from `(sourceId, registryVersion, timestamp / 1000)`, and the caller cannot set the timestamp. See [Selection influence](#selection-influence) |
+| Cross-source or cross-context reuse | The message binds `value`, `sourceId`, `registryVersion`, `signaturesRequired`, `timestamp` and `signersBitmap` |
+| Unauthorized Solana feed writes | `submit_attestation` re-verifies every write and enforces a freshness window, an active registry version, `min_signers`, a fixed quorum per feed and a strictly increasing `timestamp` |
+| Look-alike feed accounts | Consumers check the `Feed` PDA `["molpha_feed", source_id, [signatures_required], submitter]` against the Molpha program ID and pin the submitter they read |
+| Node misbehavior | `slash_offence` takes on-chain evidence, slashes the deposit and unclaimed rewards, and removes the node |
+| Ticket stuffing | A ticket needs an active gateway's dispatch signature and a valid attestation, and each round counts once |
 
-## Current trust assumptions (Brebeneskul devnet)
+### Selection influence
 
-- **Protocol admin** controls node registration (`addNode`/`removeNode`) and the redundancy buffer on every registry. The registered node set plus the admin are the entire trust root of the stateless verifiers.
-- **Pre-audit.** No external audit has been completed; mainnet is gated on it.
-- **Partial economic security.** Staking and reward accounting are live on devnet (settlement, finalize/dispute paths, reward claims). Slashing is not — `dispute_round` exists, but A3 (Chivchyn) must first ship Solana registry versioning with historical validation (the prerequisite for dispute adjudication), then broader proof-based operator slashing. The node set remains permissioned; devnet is not production-ready.
+Callers cannot choose the round timestamp, so they cannot pick which nodes are eligible. The gateway does choose it: it stamps its own clock, floored to 100 ms, and nodes refuse a timestamp too far from their own clocks. Because selection changes once per second, a gateway delaying a round could shift it into a different selection set. The defenses are that selection is public and re-derived by every verifier, so an attestation with a signer outside it never verifies, and producing one is slashable (`UnsolicitedSigning`). Selection limits who can sign; it is not proof that nobody influenced which eligible set a round landed in.
+
+## Trust assumptions
+
+### Protocol authority
+
+- Registers nodes: on Solana it co-signs every `register_node` with the node owner. The node set is permissioned; nodes are run by independent operators.
+- Can deactivate nodes, reinstate frozen nodes early and set the redundancy buffer (`update_registry_policy`).
+- Registers and deactivates gateways (`register_gateway`, `deactivate_gateway`).
+- On EVM and Starknet, the verifier admin controls `addNode`/`removeNode` and the redundancy buffer.
+
+The registered node set and the admin are the trust root of every verifier.
+
+### Gateways
+
+Gateways are operated by Molpha. A gateway:
+
+- admits requests and enforces payment and quota (subscription limits or x402) at admission; the Solana program records no per-round usage;
+- assigns each round's timestamp;
+- dispatches rounds to the selected nodes and returns the aggregate;
+- signs dispatches that make sampled rounds valid epoch tickets.
+
+A gateway cannot forge an attestation: it holds no node key. It can refuse or delay service. Treat any gateway response as unverified until you verify the attestation. See [Gateways](/gateways/overview).
+
+### Nodes
+
+Each node locks `minimum_node_deposit` USDC at registration. Anyone can file evidence with `slash_offence` and earns `challenger_bounty_bps` of what is slashed.
+
+| Offence | Penalty |
+| --- | --- |
+| Equivocation (two values for one round) | 100% slash, permanent removal |
+| Unsolicited signing (outside the selection set) | 100% slash, permanent removal |
+| Commitment reuse | 50% slash, permanent removal |
+| Nonce reuse | 100% slash, permanent removal |
+| Inactivity (availability below the floor in a finalized epoch) | No slash, frozen for one day |
+
+Details are in [Solana program](/protocol/solana-program#deposits-and-punishments). The deposit bounds the cost of a provable fault; it does not cover faults that leave no on-chain evidence, such as a quorum colluding on a wrong value without equivocating.

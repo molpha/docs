@@ -1,114 +1,72 @@
 ---
-title: "Quickstart: AI Agents"
-description: "Make your first verified API request from an AI agent with MCP, then choose subscription or pay-per-request access."
+title: "Quickstart: AI agents"
+sidebarTitle: "AI agents"
+description: "Connect an AI agent to Molpha over MCP and get its first threshold-signed attestation."
 icon: "robot"
 ---
 
-This quickstart is for agents that need verifiable data without embedding oracle-specific logic in every prompt or tool call.
+Connect your agent to the hosted Molpha MCP server, look around without a wallet, then run a paid round signed by your own wallet. It takes about five minutes.
 
-By the end, your agent can discover Molpha capabilities, request a threshold-signed payload, and decide whether to verify it, publish it to Solana, or pass chain-ready verifier arguments to an application.
+<Info>
+Prefer a server that holds its own signer and runs unattended? Use the [local stdio server](/mcp/local) instead. [MCP overview](/mcp/overview) compares the two.
+</Info>
 
-## Pick an access model
+<Steps>
+  <Step title="Add the server">
+    The hosted server needs no install and no keys.
 
-| Model | Use when | Setup |
-| --- | --- | --- |
-| **Subscription + Delegate** | You (or your org) already pay for a plan; the agent is a hot key | Subscribe, `add_delegate`, agent calls `/v1/round/execute` (or MCP `payment: "subscription"` / `"auto"`) |
-| **x402 escrow** | The agent should pay only when it requests data | Fund the escrow ATA (MCP can top up within caps), call `/v1/agent/execute` via `payment: "x402"` / `"auto"` |
+    <CodeGroup>
+    ```sh Claude Code
+    claude mcp add --transport http molpha https://mcp.molpha.io/mcp
+    ```
 
-x402 and AgentEscrow are one path. For the full comparison, see [Access Models](/access-models/overview).
+    ```json Cursor (.cursor/mcp.json)
+    { "mcpServers": { "molpha": { "url": "https://mcp.molpha.io/mcp" } } }
+    ```
 
-## 1. Install the MCP server
+    ```json VS Code (.vscode/mcp.json)
+    { "servers": { "molpha": { "type": "http", "url": "https://mcp.molpha.io/mcp" } } }
+    ```
+    </CodeGroup>
+  </Step>
 
-Requires Node.js 24 or later.
+  <Step title="Explore without a wallet">
+    Read tools work straight away. Try:
 
-```bash
-git clone https://github.com/Molpha/mcp.git
-cd mcp
-npm ci
-cp .env.example .env
-npm run build
-```
+    > Use Molpha to show the current capabilities: registry version, node count, chains and verifier addresses. Then derive the sourceId for `https://api.drand.sh/public/1000` at `$.round`. Make no writes.
+  </Step>
 
-Set a signer and Solana RPC in `.env`:
+  <Step title="Fund a testnet wallet">
+    Paid rounds are signed by **your** wallet, never by the server. Use a dedicated devnet wallet (`solana-keygen new --outfile devnet-keypair.json` creates one) with a little Devnet USDC from [Circle's faucet](https://faucet.circle.com/) (choose **USDC** on **Solana Devnet**). `get_x402_status` in the next step shows the exact price and your balance. The wallet needs no SOL for an x402 round: the gateway's facilitator pays the network fee.
+  </Step>
 
-```dotenv
-SIGNER_BACKEND=memory
-OWNER_KEYPAIR=/absolute/path/to/owner-keypair.json
-SOLANA_RPC=https://api.devnet.solana.com
-GATEWAY_ENDPOINTS=
-```
+  <Step title="Run a pay-per-request round">
+    Ask for a quote first, then the round:
 
-Leave `GATEWAY_ENDPOINTS` empty to use the SDK default. Override only when you need a specific gateway deployment.
+    > Call `get_x402_status` for 3 signatures with payer `<your wallet address>` and tell me the price. Then run `prepare_x402_round` for the same source with 3 signatures for the EVM chain and give me the transaction to sign.
 
-Run:
+    Sign the returned USDC transfer with your wallet and **do not broadcast it**. [Sign, don't send](/mcp/hosted#pay-per-request-x402) has a short Node script for this. A prepared payment is valid for about a minute; if it lapses, prepare again. Pass the signed transaction to `execute_x402_round`: the gateway settles the payment and returns the signed attestation, verifier arguments and a payment receipt.
+  </Step>
 
-```bash
-npm run doctor
-```
+  <Step title="Use the attestation, not the summary">
+    The trust anchor is the signed attestation the tool returns, not the agent's prose. Verify it in your contract or service before acting on the value. See [Verify on EVM](/verifiers/evm).
+  </Step>
+</Steps>
 
-The doctor prints client-specific config snippets with absolute paths.
+## Already have a subscription?
 
-## 2. Connect your agent client
-
-Use the compiled stdio server in Cursor, Claude Desktop, Codex, or another MCP-compatible client. For Claude Desktop you can also pack an MCPB — see [MCP server](/mcp/molpha-mcp#connect-your-mcp-client).
-
-```json
-{
-  "mcpServers": {
-    "molpha": {
-      "command": "node",
-      "args": ["/absolute/path/to/mcp/dist/src/server.js"],
-      "env": {
-        "SIGNER_BACKEND": "memory",
-        "OWNER_KEYPAIR": "/absolute/path/to/owner-keypair.json",
-        "SOLANA_RPC": "https://api.devnet.solana.com"
-      }
-    }
-  }
-}
-```
-
-Restart the client, then ask it to call `molpha_get_capabilities`. If the client still lists job tools such as `molpha_create_job`, reload the MCP server.
-
-## 3. Make a read-only discovery request
-
-Use a prompt like:
-
-> Use Molpha to inspect the current protocol capabilities. Summarize the registry version, node count, supported chains, gateway endpoints, and verifier addresses. Do not make any writes.
-
-This confirms the agent can reach the server, gateway, and Solana RPC without spending USDC.
-
-## 4. Request verified data
-
-Derive or reuse a feed, then fetch with `payment: "auto"`:
-
-<Warning>
-**Fund the agent before the first paid request**
-
-For a newly configured agent with neither a subscription nor USDC, `payment: "auto"` first finds no active subscription and then cannot fund the x402 escrow, so this prompt fails. Payment setup is in step 5 below — provision a [subscription](/access-models/subscriptions) or fund the signer/escrow with Devnet USDC from [Circle's faucet](https://faucet.circle.com/) (select **USDC** on **Solana Devnet**) before issuing it.
-</Warning>
-
-> Derive a Molpha feedId for `https://api.example.com/v1/finalized/price` using `$.price` and 3 required signatures. Then fetch a signed result with `payment: "auto"` and a maximum age of 60 seconds for EVM. Summarize the signed value, payment mode used, and EVM verifier call arguments. Do not submit a transaction.
-
-The trust anchor is the returned signed payload, not the prose summary. Your application should verify the payload before acting on the value.
-
-Before authorizing x402 spend:
-
-> Call `molpha_agent_status` for 3 required signatures. Tell me the escrow's USDC balance, committed amount, and quoted next price.
-
-## 5. Add payment only when needed
-
-If the agent creates or maintains feeds under a plan, use [Subscriptions](/access-models/subscriptions) and optionally add a [Delegate](/access-models/delegates) for the hot agent key. MCP `payment: "subscription"` or `"auto"` uses that plan.
-
-If the agent only needs one-off paid data, use [x402 escrow](/access-models/x402) via `payment: "x402"` or `"auto"`. The MCP server can fund the escrow from the signer's USDC balance up to `MOLPHA_X402_MAX_PRICE_USDC` / `MOLPHA_X402_MAX_SPEND_PER_DAY_USDC`.
+Sign in with your wallet instead of paying per round: `begin_session` returns a text message, your wallet signs it, `complete_session` returns a session token, and `execute_subscription_round` runs rounds against your plan. The wallet must be the subscription owner or one of its [delegates](/access-models/delegates). See [Sign in with your wallet](/mcp/hosted#sign-in-with-your-wallet-siwx).
 
 ## Next steps
 
-<CardGroup cols={2}>
-  <Card title="MCP server reference" icon="robot" href="/mcp/molpha-mcp">
-    Tool list, payment modes, guardrails, signer options, and troubleshooting.
+<CardGroup cols={3}>
+  <Card title="Hosted MCP" icon="cloud" href="/mcp/hosted">
+    Every hosted flow, step by step.
   </Card>
-  <Card title="Agent access models" icon="wallet" href="/access-models/overview">
-    Choose Delegate or x402 escrow.
+  <Card title="Tool reference" icon="list" href="/mcp/tools">
+    Inputs, outputs and errors for every tool.
+  </Card>
+  <Card title="Access and payments" icon="wallet" href="/access-models/overview">
+    Subscriptions, delegates and x402 compared.
   </Card>
 </CardGroup>

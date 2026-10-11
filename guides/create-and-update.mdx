@@ -1,11 +1,14 @@
 ---
-title: "Maintain a Feed"
-description: "Subscribe with USDC, derive a feed ID, then run a gateway round and submit the signed result on-chain."
+title: "Maintain a Solana feed"
+sidebarTitle: "Maintain a feed"
+description: "Keep a Solana Feed account current: subscribe, request rounds and submit them, one at a time or in batches."
 ---
 
-Maintaining a feed requires an active subscription. Reading existing feeds requires no subscription.
+A Solana `Feed` account is only as fresh as its submitter keeps it. This guide shows how to keep one current with the SDK: subscribe, request rounds, submit them, and scale to many sources. Reading a feed needs no subscription; producing one does.
 
 ## 1. Subscribe
+
+The snippets on this page use `sdk` from [Initialize](/sdk/overview#initialize). Skip this step if the wallet already has a subscription, for example from the [backend quickstart](/quickstarts/backend): a second `subscribe` fails.
 
 ```ts
 import { PlanType } from "@molpha/sdk";
@@ -15,94 +18,125 @@ const plan = await sdk.solana.getPlan(PlanType.Basic);
 await sdk.solana.subscribe(PlanType.Basic, {
   maxPriceUsdc: plan.subscriptionPrice,
 });
+```
 
-// Later: renew for another period
+To renew for another 30 days later:
+
+```ts
 await sdk.solana.extendSubscription({
   maxPriceUsdc: plan.subscriptionPrice,
 });
 ```
 
-`maxPriceUsdc` is a safety bound: the transaction aborts if the on-chain price is higher than the user approved.
+Both calls transfer the plan price in USDC. `maxPriceUsdc` is a safety bound: the transaction aborts if the on-chain price is higher than you approved.
 
-## 2. Derive `feedId`
+## 2. Derive `sourceId`
 
-Feed identity is deterministic. No separate creation transaction is sent.
+Source identity is deterministic. No separate creation transaction is sent.
 
 ```ts
-import { deriveApiConfigHash, deriveFeedIdString } from "@molpha/sdk";
+import { deriveSourceIdString } from "@molpha/sdk";
 
 const apiConfig = {
-  url: "https://api.example.com/price",
-  responseParser: "$.price",
+  url: "https://api.drand.sh/public/1000", // replace with your API
+  responseParser: "$.round",
 };
 
 const signaturesRequired = 3;
-const feedId = deriveFeedIdString(
-  wallet.publicKey.toBytes(),
-  deriveApiConfigHash(apiConfig),
-  signaturesRequired,
-);
+const sourceId = deriveSourceIdString(apiConfig);
 ```
 
-The first successful submit creates the Solana `Feed` account if it does not exist.
+`sourceId` is the keccak256 hash of the canonical `apiConfig`. The Solana `Feed` account is keyed by `(sourceId, signaturesRequired, submitter)`, and the first successful submit creates it if it does not exist.
+
+For numeric values that move between fetches, use [tolerance mode](/concepts/feeds#exact-and-tolerance-mode).
 
 ## 3. Request and submit
 
 ```ts
-const { result, signature } = await sdk.requestAndSubmit(feedId, {
+const { result, signature, feed } = await sdk.requestAndSubmit({
   apiConfig,
   signaturesRequired,
 });
 
-const feed = await sdk.solana.readFeed(feedId);
-console.log(feed?.value, feed?.canonicalTimestamp, signature);
+const account = await sdk.solana.readFeed(sourceId, signaturesRequired);
+console.log(account?.value, account?.timestamp.toString(), signature);
 ```
 
-`requestAndSubmit` is equivalent to:
+`requestAndSubmit` runs these two calls:
 
 ```ts
 const result = await sdk.gateway.requestSignedData({
-  feedId,
   apiConfig,
   signaturesRequired,
 });
 
-const { signature } = await sdk.solana.submitDataUpdate(result);
+const { signature, feed } = await sdk.solana.submitAttestation(result);
 ```
+
+If the round succeeds but the Solana submit fails, `requestAndSubmit` throws `SubmitFailedError`. The round is already paid for, so submit `error.result` again with `sdk.solana.submitAttestation` instead of requesting a new round.
 
 ## Constraints
 
 - Subscription must be active.
 - Requested quorum must be within the subscription's signer limit.
-- Delegates must be active when the consumer authority differs from the subscription owner.
-- `feedId` must match the canonical API config hash and quorum.
-- A submitted update must have a strictly newer `canonical_timestamp`.
+- A consumer other than the owner must be an active [delegate](/access-models/delegates).
+- The gateway response must carry the `sourceId` derived from `apiConfig`; the SDK rejects a result that does not.
+- A submitted update must have a strictly newer `timestamp` than the one stored in the `Feed` account.
 
 ## Fast repeated rounds
 
 For repeated updates, cache registry selection config and nodes:
 
 ```ts
-const context = await sdk.gateway.prepareContext(feedId);
+const context = await sdk.gateway.prepareContext();
 
 const result = await sdk.gateway.requestSignedData({
-  feedId,
   apiConfig,
   signaturesRequired,
   context,
 });
 ```
 
+### Several attestations in one transaction
+
+`sdk.solana.submitAttestations(attestations)` submits several attestations of one feed (same `sourceId` and `signaturesRequired`, distinct timestamps) in one transaction, applied oldest first. The transaction is atomic. When the attestations do not fit, it throws `BatchTooLargeError` before sending; `error.fits` is how many do. See [Batch submit](/sdk/reference#batch-submit).
+
+### Many sources at once
+
+`requestMany` requests a list of sources and, by default, submits each attestation to Solana:
+
+```ts
+import { requestMany } from "@molpha/sdk";
+
+const results = await requestMany(sdk, [
+  { apiConfig, signaturesRequired, label: "price" },
+  { apiConfig: otherApiConfig, signaturesRequired },
+]);
+
+for (const r of results) {
+  if (!r.ok) console.error(r.label, r.error);
+  else if (r.submitError) console.error(r.label, "signed but not submitted", r.submitError);
+}
+```
+
+- The registry inputs are read once and shared by every request.
+- Gateway concurrency is bounded. It halves when the gateway answers busy (HTTP 503 or 429) and grows back while requests succeed. Set the ceiling with `concurrency`.
+- `spreadMs` spreads request starts over a window by a hash of each `sourceId`. The default is `0`, no spreading.
+- `submit: false` skips the Solana submit. `submitConcurrency` bounds submits in flight (default 8).
+- Results are returned in input order, and a source that fails does not stop the others. A failed submit keeps the signed `attestation` on the result and sets `submitError`.
+
+Each request keeps the single-request retry policy described in the [gateway client](/sdk/gateway-api#retries-and-errors).
+
 ## Next steps
 
-<CardGroup cols={2}>
-  <Card title="Read and verify" icon="magnifying-glass" href="/guides/read-and-verify">
-    Consume maintained feed accounts or verify fresh payloads.
-  </Card>
-  <Card title="HTTP API" icon="cloud" href="/gateways/api/round-execute">
-    OpenAPI reference for gateway endpoints.
+<CardGroup cols={3}>
+  <Card title="Read a feed" icon="magnifying-glass" href="/verifiers/solana">
+    Consume the feed from TypeScript or your own program.
   </Card>
   <Card title="Gateway client" icon="code" href="/sdk/gateway-api">
-    SDK methods for subscription and agent rounds.
+    Retries, private APIs and paywalled sources.
+  </Card>
+  <Card title="Subscriptions" icon="calendar-check" href="/access-models/subscriptions">
+    Plans, quota and delegates.
   </Card>
 </CardGroup>

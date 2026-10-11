@@ -1,195 +1,97 @@
 ---
-title: "SDK Overview"
-description: "Install @molpha/sdk and request verifiable data from backends, agents, and custom applications."
+title: "SDK overview"
+sidebarTitle: "Overview"
+description: "Install @molpha/sdk, initialize the MolphaSDK facade, and find the method you need for gateway rounds and Solana feeds."
 ---
 
-[`@molpha/sdk`](https://www.npmjs.com/package/@molpha/sdk) is the recommended way to integrate Molpha from TypeScript. `MolphaSDK` wires the gateway client and the Solana client together behind a single wallet, and the package also ships framework-agnostic EVM/Starknet [argument builders](/sdk/reference).
+[`@molpha/sdk`](https://www.npmjs.com/package/@molpha/sdk) is the TypeScript client for Molpha. This page covers installation, initialization and the main methods; for an end-to-end walkthrough, start with the [backend quickstart](/quickstarts/backend).
 
-For AI agent workflows in Cursor, Claude Desktop, or Codex, use the [Molpha MCP server](/mcp/molpha-mcp) — it wraps this SDK behind typed MCP tools. For the fastest path by audience, see the [Backend quickstart](/quickstarts/backend) or [AI agent quickstart](/quickstarts/ai-agents).
+The SDK has three parts:
 
-## What you can build
-
-| Workflow | SDK path |
-| --- | --- |
-| Request one signed payload | `sdk.gateway.requestSignedData(...)` |
-| Maintain a Solana feed | Derive `feedId`, then `sdk.requestAndSubmit(...)` |
-| Read a maintained feed | `sdk.solana.readFeed(feedId)` |
-| Verify directly in Rust | Use `molpha-verifier` with registry/node data |
-| Call EVM/Starknet verifiers | `buildEvmVerifierArgs(result)` / `buildStarknetVerifierArgs(result)` |
+- **`sdk.gateway`** ([`MolphaGateway`](/sdk/gateway-api)) runs signing rounds and returns an [`Attestation`](/sdk/reference#attestation).
+- **`sdk.solana`** ([`MolphaSolanaClient`](/sdk/reference#molphasolanaclient)) manages subscriptions, submits attestations to Solana `Feed` accounts and reads them.
+- **Verifier argument builders** ([`buildEvmVerifierArgs`](/sdk/reference#buildevmverifierargs), [`buildStarknetVerifierArgs`](/sdk/reference#buildstarknetverifierargs)) map an `Attestation` onto the EVM and Starknet `verify` calls, with no ethers, viem or starknet.js dependency.
 
 ## Installation
-
-Install the package along with the Solana peer dependencies (required for `MolphaSDK` / `MolphaSolanaClient`):
-
-<Tabs>
-<Tab title="pnpm">
-
-```bash
-pnpm add @molpha/sdk @anchor-lang/core bn.js
-```
-
-</Tab>
-<Tab title="npm">
 
 ```bash
 npm install @molpha/sdk @anchor-lang/core bn.js
 ```
 
-</Tab>
-<Tab title="yarn">
-
-```bash
-yarn add @molpha/sdk @anchor-lang/core bn.js
-```
-
-</Tab>
-</Tabs>
-
-- **ESM, browser-first**, with `"sideEffects": false`
-- **Tree-shakeable Solana path** — gateway-only or read-only apps that skip the Solana imports can tree-shake the Anchor-heavy path entirely
-- **Node.js `>=20.19.0`**
-- Node-only helpers (e.g. `walletFromKeypairFile`) live under the `@molpha/sdk/utils` subpath so they never enter browser bundles
-
-`@anchor-lang/core` provides the Anchor `Wallet` / `Connection` types the Solana client expects. `bn.js` is used by the Solana / Anchor path. The SDK pulls in `@solana/kit` and `@noble/*` as direct dependencies — you do not need `@solana/web3.js`, `@coral-xyz/anchor`, or `@solana/spl-token` for the consumer flow.
+- Requires Node.js `>=20.19.0`. The package is ESM-only and marked `"sideEffects": false`.
+- `@anchor-lang/core` and `bn.js` are peer dependencies used by the Solana client. You do not need `@solana/web3.js`, `@coral-xyz/anchor` or `@solana/spl-token`.
+- Node-only helpers (`walletFromKeypairFile`, `loadKeypair`) live in the `@molpha/sdk/utils` subpath so they stay out of browser bundles.
 
 ## Initialize
 
 ```ts
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { web3 } from "@anchor-lang/core";
 import { MolphaSDK } from "@molpha/sdk";
 import { walletFromKeypairFile } from "@molpha/sdk/utils";
 
 const sdk = new MolphaSDK({
   connection: new web3.Connection("https://api.devnet.solana.com", "confirmed"),
-  wallet: walletFromKeypairFile("~/.config/solana/id.json"),
+  wallet: walletFromKeypairFile(join(homedir(), ".config/solana/id.json")),
 });
 ```
 
-By default the SDK talks to `https://dev-gateway.molpha.io/`. Override with `endpoints` (string or array for failover):
+`walletFromKeypairFile` reads the path as given and does not expand `~`.
 
-```ts
-import { DEFAULT_GATEWAY_ENDPOINT } from "@molpha/sdk";
+| Option | Default | Meaning |
+|---|---|---|
+| `connection` | required | Solana `web3.Connection`. |
+| `wallet` | required | A [`MolphaWallet`](/sdk/overview#wallet). Signs Solana transactions and gateway requests; its public key is the default subscription owner. |
+| `endpoints` | `DEFAULT_GATEWAY_ENDPOINT` (`https://gateway.molpha.io/`) | A gateway URL, a `{ url, gatewayAuthority }` object, or an array of them for failover. See [endpoints](/sdk/gateway-api#endpoints). |
+| `programId` | `MOLPHA_PROGRAM_ID` | Molpha program. Also bound into gateway request auth. |
+| `idl` | `MOLPHA_IDL` | Anchor IDL. Override only when pinning a different deployment. |
+| `commitment` | Anchor default | Commitment for Solana reads and transactions. |
 
-const sdk = new MolphaSDK({
-  connection,
-  wallet,
-  endpoints: [DEFAULT_GATEWAY_ENDPOINT, "https://backup.example.com"],
-});
-```
+## Main methods
 
-`walletFromKeypairFile` is Node.js-only. In the browser, pass a [`MolphaWallet`](/sdk/reference#molphawallet) backed by a wallet adapter:
+| Method | What it does |
+|---|---|
+| [`sdk.gateway.requestSignedData(opts)`](/sdk/gateway-api#requestsigneddata) | Run one gateway round and return an `Attestation`. |
+| [`sdk.gateway.prepareContext()`](/sdk/gateway-api#preparecontext) | Fetch registry inputs and nodes once, to reuse across rounds. |
+| [`sdk.requestAndSubmit(opts)`](/sdk/gateway-api#requestandsubmit) | Run a round and submit it to Solana. Returns `{ result, signature, feed }`. |
+| [`requestMany(sdk, feeds, opts?)`](/sdk/reference#requestmany) | Update many feeds with bounded, adaptive concurrency. |
+| [`sdk.solana.getPlan(plan)`](/sdk/reference#molphasolanaclient) | Read a plan's on-chain price and limits. |
+| [`sdk.solana.subscribe(plan, { maxPriceUsdc })`](/sdk/reference#molphasolanaclient) | Buy a subscription in USDC, with a price ceiling. |
+| [`sdk.solana.submitAttestation(attestation, opts?)`](/sdk/reference#molphasolanaclient) | Verify and write one attestation to the submitter's `Feed` account. |
+| [`sdk.solana.submitAttestations(attestations, opts?)`](/sdk/reference#batch-submit) | Submit several attestations of one feed in one transaction. |
+| [`sdk.solana.readFeed(sourceId, signaturesRequired, submitter?)`](/sdk/reference#molphasolanaclient) | Read a `Feed` account, or `null` before its first submit. |
+| [`deriveSourceIdString(apiConfig)`](/sdk/reference#derivation-helpers) | Compute the `sourceId` of an API config. |
+| [`buildEvmVerifierArgs(result, { maxAge })`](/sdk/reference#buildevmverifierargs) | Arguments for the EVM verifier's `verify`. |
+| [`buildStarknetVerifierArgs(result, { maxAge })`](/sdk/reference#buildstarknetverifierargs) | Arguments for the Starknet verifier's `verify`. |
+
+You can also construct `MolphaGateway` or `MolphaSolanaClient` on their own; see [clients](/sdk/reference#clients).
+
+## Wallet
+
+`MolphaWallet` is an Anchor `Wallet` with an optional `signAuthMessage`. Every gateway request carries a signature over a `RequestAuth` digest (see [gateways](/gateways/overview)). A keypair wallet from `walletFromKeypairFile` signs it with its `payer` key automatically. A browser wallet adapter has no `payer`, so supply `signAuthMessage`:
 
 ```ts
 import type { MolphaWallet } from "@molpha/sdk";
 
-const wallet: MolphaWallet = {
+const wallet = {
   publicKey: adapter.publicKey,
   signTransaction: (tx) => adapter.signTransaction(tx),
   signAllTransactions: (txs) => adapter.signAllTransactions(txs),
   signAuthMessage: async (msg) => new Uint8Array(await adapter.signMessage(msg)),
-};
+} as MolphaWallet;
 ```
 
-<Warning>
-Gateway execution requires a real Ed25519 `authSig`. Keypair-backed wallets (`walletFromKeypairFile`) derive auth from `Wallet.payer` automatically. Browser adapters should provide `signAuthMessage`. The gateway rejects all-zero signatures.
-</Warning>
+The `as MolphaWallet` assertion is needed because the Anchor `Wallet` type declares `payer`. A wallet with neither `payer` nor `signAuthMessage` sends an all-zero auth signature, which the gateway rejects with HTTP 401.
 
-## Facade surface
-
-| Member | Purpose |
-|---|---|
-| `sdk.requestAndSubmit(feedId, { apiConfig, signaturesRequired })` | Run a gateway round against the current registry version and submit the signed result to Solana in one call. Returns `{ result, signature }`. |
-| `sdk.gateway` | The [gateway client](/sdk/gateway-api): `requestSignedData`, `prepareContext`, … |
-| `sdk.solana` | The Solana client (below): `getPlan`, `subscribe`, `extendSubscription`, `submitDataUpdate`, `readFeed`, `getRegistrySelectionConfig`, … |
-
-`requestAndSubmit` is equivalent to:
-
-```ts
-const result = await sdk.gateway.requestSignedData({
-  feedId,
-  apiConfig,
-  signaturesRequired,
-});
-const { signature } = await sdk.solana.submitDataUpdate(result);
-```
-
-## Solana client (`sdk.solana`)
-
-All methods target the Molpha program (`MoLFGDpFoVnQgwbkTNScKPohCxhbfd61JjFrnotuwzh` on devnet); PDAs are derived internally from the documented seeds.
-
-### Plans and subscriptions
-
-```ts
-import { PlanType } from "@molpha/sdk";
-
-const plan = await sdk.solana.getPlan(PlanType.Basic);
-
-const { pricePaid } = await sdk.solana.subscribe(PlanType.Basic, {
-  maxPriceUsdc: plan.subscriptionPrice,
-});
-
-// Renew for another period (same maxPriceUsdc safety bound)
-await sdk.solana.extendSubscription({
-  maxPriceUsdc: plan.subscriptionPrice,
-});
-```
-
-`maxPriceUsdc` is a safety bound: the transaction aborts if the on-chain price is higher than what the user approved. The SDK currently exports `PlanType.Basic` (`0`). On-chain plan ordinals remain `Basic = 0`, `Standard = 1`, `Professional = 2`, `Enterprise = 3`.
-
-### Derive a feed ID
-
-```ts
-import { deriveApiConfigHash, deriveFeedIdString } from "@molpha/sdk";
-
-const signaturesRequired = 3;
-const apiConfigHash = deriveApiConfigHash(apiConfig);
-const feedId = deriveFeedIdString(
-  wallet.publicKey.toBytes(),
-  apiConfigHash,
-  signaturesRequired,
-);
-```
-
-There is no separate create instruction. The first successful `submitDataUpdate` creates the Solana `Feed` account if it does not exist. Settlement writes round receipts only.
-
-### Request
-
-```ts
-// Optional: fetch registry + nodes once, then reuse across rounds
-const context = await sdk.gateway.prepareContext(feedId);
-
-const result = await sdk.gateway.requestSignedData({
-  feedId,
-  apiConfig,
-  signaturesRequired,
-  context,
-});
-```
-
-Live gateway rounds return `fresh: true`. Gateway execution is authenticated via `signAuthMessage` (or a keypair-derived signer); the HTTP gateway rejects all-zero `authSig` values.
-
-For private APIs, pass `encrypt: { secrets: { ... } }` — `MolphaSDK` authenticates gateway node keys against on-chain Node accounts before encrypting. See the [gateway client](/sdk/gateway-api).
-
-### Submission and reads
-
-```ts
-// Verify + write the signed result to the Feed account
-const { signature } = await sdk.solana.submitDataUpdate(result);
-
-// Read the finalized on-chain feed account (bytes + metadata)
-const feed = await sdk.solana.readFeed(feedId);
-console.log(feed?.value, feed?.canonicalTimestamp);
-```
-
-`feed.value` is the on-chain byte array (`number[]`), not the human-readable `DataUpdateResult.value` string. Decode it per your feed schema (see [Read and verify](/guides/read-and-verify)).
-
-`submit_data_update` is permissionless on-chain — the program re-verifies the aggregate signature on every write and only accepts a value whose `canonical_timestamp` is strictly greater than the stored one.
-
-### Direct verification
-
-For Solana, use one of two paths:
-
-- submit through `submitDataUpdate`, then read the `Feed` account;
-- verify directly in Rust with `molpha-verifier`.
-
-For EVM and Starknet, build verifier arguments with the helpers in [SDK Reference](/sdk/reference).
+<CardGroup cols={3}>
+  <Card title="Backend quickstart" href="/quickstarts/backend">
+    Subscribe, request and submit end to end.
+  </Card>
+  <Card title="Gateway client" href="/sdk/gateway-api">
+    Rounds, retries and errors.
+  </Card>
+  <Card title="Reference" href="/sdk/reference">
+    Every exported type and function.
+  </Card>
+</CardGroup>

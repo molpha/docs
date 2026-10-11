@@ -1,33 +1,40 @@
 ---
 title: "FAQ"
+description: "Short answers to common questions about Molpha."
 ---
 
 **Is there a protocol token?**
 No. Subscriptions are paid in USDC on Solana; there is no governance token and no token-price exposure.
 
 **Do I need a subscription to read a feed?**
-No. Reading any Solana `Feed` account is permissionless and free. A subscription is only required to maintain your own feeds.
+No. Reading any Solana `Feed` account is permissionless and free. A subscription, or an x402 payment per round, is only needed to request new signed rounds from a gateway.
+
+**Who runs the nodes?**
+Independent node operators admitted by the protocol authority. Each posts a USDC deposit on Solana and can be slashed with on-chain evidence of misbehaviour, which anyone can file.
+
+**Who runs the gateways?**
+Molpha. A gateway admits requests, takes payment and dispatches rounds, but it cannot forge an attestation: verifiers check the nodes' signature, not the gateway.
 
 **Do AI agents need subscriptions?**
-Not always. Agents have two options: a [Delegate](/access-models/delegates) under an existing subscription, or [x402 escrow](/access-models/x402) pay-per-request with no monthly plan.
+Not always. Agents have two options: a [Delegate](/access-models/delegates) under an existing subscription, or [x402](/access-models/x402) pay-per-request with no monthly plan.
 
 **What is x402 used for?**
-x402 is the HTTP payment loop for the agent escrow path. The client funds a per-gateway `AgentEscrow` ATA; if underfunded, the gateway returns a `402 Payment Required` envelope with where and how much to pay.
+x402 is the HTTP payment loop for pay-per-request rounds. The first request returns a `402 Payment Required` envelope with where and how much to pay; the client signs an x402 v2 `exact` USDC payment to the protocol treasury and retries. Each verified payment authorizes exactly one round, and there is no escrow account or request signature beyond the payment.
 
 **Do I need to change my contract to consume Molpha on EVM?**
-One external call: `require(verifier.verify(update, sig))`, plus your own staleness check. No inheritance, no interface to implement.
+One external call: `(bool ok, uint8 code) = verifier.verify(attestation, maxAge); require(ok);`. `maxAge` is your staleness window in seconds (`0` disables the check). No inheritance, no interface to implement. See [EVM](/verifiers/evm).
 
 **Why does the same signature work on every chain?**
-The signed message contains no `chainId`, and every verifier (Solidity, Cairo, the Solana program) checks the identical domain-separated message with the identical selection and aggregation rules. The Starknet port is proven with parity tests that accept unmodified EVM-produced signatures.
+The signed message contains no `chainId`, and every verifier (Solidity, Cairo, the Solana program) checks the identical domain-separated message with the identical selection and aggregation rules. Parity tests check that unmodified EVM-produced signatures verify on Starknet.
 
 **Who keeps a Solana feed updated?**
-`submit_data_update` is permissionless — nodes, gateways, or your own keeper can push signed values. The program re-verifies the aggregate signature on every write, so the submitter doesn't affect trust.
+`submit_attestation` is permissionless — a gateway, a keeper or your own backend can push signed values. The program re-verifies the aggregate signature on every write, so the submitter doesn't affect trust in the value. Each submitter writes its own `Feed` account for a source and quorum (the submitter is part of the account address), so a reader must know which submitter's feed it consumes.
 
 **Does the verifier protect me from stale or replayed data?**
-No — by design. Historical registry versions remain verifiable forever. Enforce freshness against `canonicalTimestamp` and replay protection in your own contract.
+Partly. The Solana program's `submit_attestation` enforces a freshness window and only accepts a strictly newer `timestamp` per feed. The EVM and Starknet `verify(attestation, maxAge)` reject an attestation older than `maxAge` seconds when you pass a non-zero value, and a registry version is accepted only until shortly after its successor activates. No verifier tracks consumed attestations: add replay protection in your own contract where it matters. See [Solana](/verifiers/solana), [EVM](/verifiers/evm) and [Starknet](/verifiers/starknet).
 
 **Is Molpha Chainlink (AggregatorV3) compatible?**
-No, by design. Consumers call `verify()` directly with a self-contained payload. There is no aggregator product.
+No, by design. Consumers call `verify()` directly with a self-contained attestation. There is no aggregator product.
 
 **Is the protocol audited?**
-Not yet. The current deployments are pre-audit testnet contracts with a permissioned node set; mainnet is gated on a full audit.
+Not yet. Current deployments are pre-audit testnet contracts; mainnet follows an external audit. See [Releases](/resources/releases).

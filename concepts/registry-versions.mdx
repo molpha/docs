@@ -1,38 +1,61 @@
 ---
-title: "Registry Versions"
-description: "The node set is append-only and versioned. Signatures are always checked against the snapshot they were produced for."
+title: "Registry versions"
+description: "The node set is versioned. Each attestation is verified against the snapshot it names, within that snapshot's lifetime."
 ---
 
-The node set is **append-only and versioned**. Every `addNode` / `removeNode` creates a brand-new immutable snapshot and bumps the registry version by one. Historical snapshots are never mutated or deleted.
+This page explains how the node set is versioned, how long a version stays acceptable, and how each chain stores it. Read it if you verify attestations across node-set changes or index nodes yourself.
+
+Every change to the node set or the redundancy buffer publishes a new snapshot and increments the registry version by one. A snapshot's node key set and redundancy buffer never change. Its metadata does change once when it is superseded: EVM and Starknet clear its latest flag, and Solana writes `grace_active_until` on the previous `Registry` account. Snapshots are never deleted.
 
 ## Why versions matter
 
-A `DataUpdate` records the `registryVersion` it was signed under, and `verify()` always checks the signature against **exactly that snapshot** — even if newer versions exist. This guarantees:
+An attestation's payload records the `registryVersion` it was signed under, and verification uses exactly that snapshot's keys and redundancy buffer, even if newer versions exist. So:
 
-- A signature is checked against the node set that was active at signing time.
-- **Rounds signed against older versions remain permanently verifiable** (late-arriving payloads still verify).
+- A signature is checked against the node set that was active when it was signed.
+- A round signed under an older version keeps verifying after the node set changes, as long as its timestamp is inside that version's window.
 
-<Warning>
-Permanent verifiability also means the verifier has no replay window of its own. Consumers must enforce freshness (via `canonicalTimestamp`) and replay protection themselves.
-</Warning>
+## Version lifetime
 
-## Storage layout
+| Chain | A superseded version is accepted | Checked against | Error |
+| --- | --- | --- | --- |
+| EVM, Starknet | Until 60 seconds after its successor activates | Payload `timestamp / 1000` | `R_VERSION_EXPIRED` |
+| Solana `submit_attestation` | Until `max_settlement_delay_seconds` (at most 7 days) after it was replaced | Cluster time | `RegistryNotActive` |
+| Solana `submit_ticket` | If it was active at the round's own time | Payload `timestamp / 1000` | `RegistryNotActive` |
 
-Both EVM and Starknet registries follow the same layout:
+On EVM and Starknet, each version activates at the block timestamp of the transaction that published it; version `0`, the empty constructor snapshot, activates at `0`. Version `v` accepts payloads whose `timestamp / 1000` lies in `[activatesAt(v), activatesAt(v + 1) + 60]`. A payload before activation fails with `R_NOT_YET_ACTIVE`. The latest version has no upper bound. See [EVM result codes](/verifiers/evm#result-codes).
 
-- **Index `0`** of every snapshot holds the running **plain-sum aggregate key** of all registered nodes.
-- **Indices `1..=nodeCount`** hold the individual node public keys (1-based indexing — this is why bitmap bit `i-1` maps to node index `i`).
-- **256-node cap** (`MAX_NODES = 256`), matching the single 256-bit signers bitmap.
-
-On EVM, each snapshot is one immutable **SSTORE2 blob**; the contract keeps an array of `registryPointers`, one per version. On Starknet, the same model is mirrored with per-`(version, index)` coordinate maps packed into a single felt key (`slot = version · 2^32 + index`). Version `0` is the empty set.
-
-## Mutations
-
-- **Add:** new aggregate = old aggregate + new pubkey; the node is appended at `count + 1`. Gated by a valid [proof-of-possession](/protocol/cryptography#proof-of-possession).
-- **Remove:** new aggregate = old aggregate − removed pubkey; **swap-and-pop** moves the last node into the freed slot to keep indices dense.
+Because the EVM and Starknet check uses the payload timestamp, a round stamped inside the window keeps verifying later, while a retired node set cannot sign for new timestamps.
 
 <Warning>
-`removeNode` changes node indices. Always resolve a node's current index from the contract (`getNodeIndex`) rather than caching it.
+The version window is not a replay or freshness window. With `maxAge = 0`, a valid attestation verifies any number of times, indefinitely. Pass a `maxAge` and track replay yourself; see the [consumer checklist](/verifiers/overview#consumer-checklist).
 </Warning>
 
-On Solana, the registry lives in the `RegistryState` PDA (current/previous version + counts) with one `Node` PDA per active slot (`["molpha_node", index_le]`) holding that node's secp256k1 public key. For `submit_data_update`, a payload's `registry_version` must be the current version or a grace-valid previous version (`InvalidRegistryVersion` otherwise). Settlement instructions (`settle_round_receipt`, `settle_agent_round`) accept the current registry version only.
+## EVM and Starknet storage
+
+Both registries cap the node set at 256 nodes (`MAX_NODES = 256`), matching the 256-bit signers bitmap, and use 0-based node indices: bit `i` is node index `i` of that version. Version `0` is the empty set.
+
+- **EVM.** Each snapshot's public keys, in index order, are one SSTORE2 blob. The contract keeps one packed entry per version (blob pointer, node count, redundancy buffer, activation time, latest flag) and one chained registry root per version.
+- **Starknet.** Keys live in per-`(version, index)` maps under one felt key (`slot = version · 2^32 + index`), plus one entry per version with node count, redundancy buffer, activation time and latest flag. Storage index `0` of each version holds the running plain-sum aggregate key; public index `i` sits at storage index `i + 1`.
+
+### Changes
+
+| Change | Function | Effect |
+| --- | --- | --- |
+| Add | `addNode` / `add_node` | Appends the node at index `nodeCount`. Requires a [proof of possession](/protocol/cryptography#proof-of-possession) |
+| Remove | `removeNode(node, index)` / `remove_node(node, index)` | Swap-and-pop: the last node moves into the freed index. The caller passes the node's index as a witness |
+| Redundancy buffer | `setRedundancyBuffer` / `set_redundancy_buffer` | Same key set, new buffer |
+
+On Starknet the stored aggregate is updated by adding or subtracting the changed key. A node address is in one of three states: never registered, active or retired. A retired address cannot be registered again.
+
+<Warning>
+Removal changes node indices. Do not cache an index across versions. On EVM, derive it from `LogNodeAdded` and `LogNodeRemoved` (on removal, the last node moves to the removed node's `oldIndex` unless the removed node was last). On Starknet, `get_node_index` returns the current index; check `is_node` first, because an unregistered address also returns `0`.
+</Warning>
+
+## Solana storage
+
+- `RegistryState` (`["molpha_registry"]`) points at the current version.
+- Each version is its own `Registry` account (`["molpha_registry", version_u32_le]`) with the ordered `Node` addresses (at most 256), node count, redundancy buffer (1 to 8), `active_from` and `grace_active_until`.
+- Signing keys live in per-operator `Node` accounts (`["molpha_node", node_owner]`), not in the snapshot. Bit `i` refers to `registry.nodes[i]`.
+- Version `0` is the empty genesis snapshot.
+
+`register_node`, `deactivate_node`, `reinstate_node`, `update_registry_policy` and `slash_offence` each publish the next version. Removal is swap-remove, so positions change between versions. See [Solana program](/protocol/solana-program#main-instructions).

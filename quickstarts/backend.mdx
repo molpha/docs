@@ -1,133 +1,118 @@
 ---
-title: "Quickstart: Backend"
-description: "Use the TypeScript SDK to request signed data, verify it, and optionally publish it to Solana."
+title: "Quickstart: Backends"
+sidebarTitle: "Backends"
+description: "Request a threshold-signed attestation with the TypeScript SDK and publish it to Solana."
 icon: "server"
 ---
 
-Backends use Molpha when they need a verifiable API result that can later be checked by a smart contract, another service, or an AI agent.
-
-`sdk.gateway.requestSignedData` calls the subscription-backed gateway route (`POST /v1/round/execute`). A fresh wallet that has not subscribed (or been registered as a [Delegate](/access-models/delegates)) receives `403` instead of a payload. Subscribe once with the signing wallet before the first round — or use the [x402 agent path](/access-models/x402) / [AI agents quickstart](/quickstarts/ai-agents) for pay-per-request access.
-
-## 1. Install the SDK
+Use the TypeScript SDK to subscribe, request a signed attestation for any API, publish it to a Solana feed, and build calldata for EVM and Starknet. You need a Solana devnet wallet with some Devnet SOL and Devnet USDC:
 
 ```bash
-npm install @molpha/sdk @anchor-lang/core bn.js
+solana-keygen new                 # writes ~/.config/solana/id.json, skip if you have one
+solana airdrop 1 --url devnet     # SOL for transaction fees
 ```
 
-Requires Node.js `>=20.19.0`.
+Get Devnet USDC from the [Circle faucet](https://faucet.circle.com/) (choose **USDC** on **Solana Devnet**). Step 3 prints the subscription price before paying it.
 
-## 2. Initialize
+The SDK is ESM-only. Put the code below in one file, `quickstart.ts`, in a project whose `package.json` has `"type": "module"`, and run it with `npx tsx quickstart.ts`.
 
-```ts
-import { web3 } from "@anchor-lang/core";
-import {
-  MolphaSDK,
-  PlanType,
-  deriveApiConfigHash,
-  deriveFeedIdString,
-} from "@molpha/sdk";
-import { walletFromKeypairFile } from "@molpha/sdk/utils";
+<Steps>
+  <Step title="Install">
+    ```bash
+    npm install @molpha/sdk @anchor-lang/core bn.js
+    ```
 
-const wallet = walletFromKeypairFile("~/.config/solana/id.json");
-const sdk = new MolphaSDK({
-  connection: new web3.Connection("https://api.devnet.solana.com", "confirmed"),
-  wallet,
-});
-```
+    Requires Node.js 20.19 or later. `@anchor-lang/core` and `bn.js` are peer dependencies.
+  </Step>
 
-## 3. Subscribe
+  <Step title="Initialize">
+    ```ts
+    import { homedir } from "node:os";
+    import { join } from "node:path";
+    import { web3 } from "@anchor-lang/core";
+    import { MolphaSDK, PlanType, deriveSourceIdString } from "@molpha/sdk";
+    import { walletFromKeypairFile } from "@molpha/sdk/utils";
 
-Gateway rounds settle against an active USDC plan. Skip this only if the wallet already has a live subscription (or is an active delegate under one).
+    const wallet = walletFromKeypairFile(join(homedir(), ".config/solana/id.json"));
+    const sdk = new MolphaSDK({
+      connection: new web3.Connection("https://api.devnet.solana.com", "confirmed"),
+      wallet,
+    });
+    ```
+  </Step>
 
-```ts
-const plan = await sdk.solana.getPlan(PlanType.Basic);
-await sdk.solana.subscribe(PlanType.Basic, {
-  maxPriceUsdc: plan.subscriptionPrice,
-});
-```
+  <Step title="Subscribe">
+    Gateway rounds from the SDK are paid by a subscription. Subscribe once with the signing wallet:
 
-`maxPriceUsdc` is a safety bound: the transaction aborts if the on-chain price exceeds what you approved. Needs Devnet SOL for fees and Devnet USDC for the plan — get USDC from [Circle's faucet](https://faucet.circle.com/) (select **USDC** on **Solana Devnet**).
+    ```ts
+    if (!(await sdk.solana.readSubscription())) {
+      const plan = await sdk.solana.getPlan(PlanType.Basic);
+      console.log("price in USDC base units:", plan.subscriptionPrice); // 1 USDC = 1,000,000
+      await sdk.solana.subscribe(PlanType.Basic, { maxPriceUsdc: plan.subscriptionPrice });
+    }
+    ```
 
-If a separate hot key will sign gateway auth instead of the subscription owner, register it with [`add_delegate`](/access-models/delegates) before calling `requestSignedData`.
+    <Warning>
+    `subscribe` transfers the plan price in Devnet USDC from your wallet and cannot be undone. It fails if the wallet already has a subscription, which is why the call is guarded.
+    </Warning>
 
-## 4. Derive a feed ID
+    `maxPriceUsdc` aborts the transaction if the on-chain price is higher than you approved. Without a subscription (or [delegate](/access-models/delegates) access), the gateway answers `403`.
+  </Step>
 
-```ts
-const apiConfig = {
-  url: "https://api.example.com/price",
-  responseParser: "$.price",
-};
+  <Step title="Define a source">
+    ```ts
+    const apiConfig = {
+      url: "https://api.drand.sh/public/1000", // a public, fixed JSON document
+      responseParser: "$.round",                // the number 1000
+    };
+    const signaturesRequired = 3;
+    const sourceId = deriveSourceIdString(apiConfig); // needed later to read the feed
+    ```
 
-const signaturesRequired = 3;
-const feedId = deriveFeedIdString(
-  wallet.publicKey.toBytes(),
-  deriveApiConfigHash(apiConfig),
-  signaturesRequired,
-);
-```
+    This example source never changes, so every node reads the same value. Replace it with your own API afterwards: pick an endpoint that returns the same value to every node, or use [tolerance mode](/concepts/feeds#exact-and-tolerance-mode) for live-moving numbers. `signaturesRequired` must be at least 3, the network minimum.
+  </Step>
 
-## 5. Request a signed payload
+  <Step title="Request a signed attestation">
+    ```ts
+    const result = await sdk.gateway.requestSignedData({ apiConfig, signaturesRequired, maxAge: 60 });
+    console.log(result.value, result.payload.timestamp, result.signature.signersBitmap);
+    ```
 
-```ts
-const result = await sdk.gateway.requestSignedData({
-  feedId,
-  apiConfig,
-  signaturesRequired,
-  maxAge: 60,
-});
+    `result` is an [`Attestation`](/sdk/reference#attestation). Treat it as unverified until a verifier has checked it.
+  </Step>
 
-console.log(result.value, result.timestamp, result.signersBitmap);
-```
+  <Step title="Publish it to Solana">
+    ```ts
+    const { signature, feed } = await sdk.solana.submitAttestation(result);
+    const account = await sdk.solana.readFeed(sourceId, signaturesRequired);
+    console.log(signature, feed, account?.value); // value is the 32 signed bytes
+    ```
 
-The result is ready for Solana submission, EVM verification, Starknet verification, or off-chain audit logging.
+    The program verifies the attestation before writing. The first submit creates the `Feed` account for `(sourceId, signaturesRequired, your wallet)`.
+  </Step>
 
-## 6. Publish to Solana when you need a maintained feed
+  <Step title="Build calldata for EVM or Starknet">
+    ```ts
+    import { buildEvmVerifierArgs, buildStarknetVerifierArgs } from "@molpha/sdk";
 
-```ts
-const { signature } = await sdk.solana.submitDataUpdate(result);
-console.log("submitted", signature);
-```
+    const evmArgs = buildEvmVerifierArgs(result, { maxAge: 60 });       // { attestation, maxAge }
+    const starknetArgs = buildStarknetVerifierArgs(result, { maxAge: 60 });
+    ```
 
-Reading the maintained feed later:
-
-```ts
-const feed = await sdk.solana.readFeed(feedId);
-console.log(feed?.value, feed?.canonicalTimestamp); // value is on-chain bytes
-```
-
-The first successful submit creates the Solana `Feed` account if it does not exist.
-
-## 7. Build contract arguments
-
-```ts
-import { buildEvmVerifierArgs, buildStarknetVerifierArgs } from "@molpha/sdk";
-
-const evmArgs = buildEvmVerifierArgs(result);
-const starknetArgs = buildStarknetVerifierArgs(result);
-```
-
-## Backend patterns
-
-| Pattern | Use it when |
-| --- | --- |
-| Request only | You need a portable proof artifact for another service or chain |
-| Request + submit | You maintain a Solana feed that many consumers read |
-| Request + verify | You gate an off-chain decision on a threshold-signed API result |
-| Request + handoff | You pass verified data to an agent or contract executor |
+    Decode the verifier's `(success, code)` with `parseEvmVerifyResult` or `parseStarknetVerifyResult`.
+  </Step>
+</Steps>
 
 ## Next steps
 
-<CardGroup cols={2}>
-  <Card title="SDK overview" icon="code" href="/sdk/overview">
-    Installation, wallet interface, and facade methods.
+<CardGroup cols={3}>
+  <Card title="Maintain a feed" icon="rotate" href="/guides/create-and-update">
+    Keep a Solana feed current, batch submits and request many sources.
   </Card>
-  <Card title="Gateway client" icon="cloud" href="/sdk/gateway-api">
-    Request shape, response fields, caching, and auth notes.
+  <Card title="SDK reference" icon="code" href="/sdk/overview">
+    Every client, type and helper.
   </Card>
-  <Card title="Subscriptions" icon="credit-card" href="/access-models/subscriptions">
-    Plans, quota, and renewing access for `/v1/round/execute`.
-  </Card>
-  <Card title="x402 escrow" icon="wallet" href="/access-models/x402">
-    Pay-per-request agent path when you do not want a monthly plan.
+  <Card title="Verify on EVM" icon="ethereum" href="/verifiers/evm">
+    Consume the attestation in Solidity.
   </Card>
 </CardGroup>

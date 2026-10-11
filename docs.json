@@ -2,7 +2,7 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "Molpha",
-  "description": "Verifiable data infrastructure for smart contracts, backends, and AI agents. Any HTTP API → one threshold-signed payload → verified on Solana, EVM, and Starknet.",
+  "description": "Any API. One threshold signature. Every chain. Threshold-signed data for smart contracts, backends and AI agents, verifiable on Solana, EVM and Starknet.",
   "logo": {
     "dark": "/logo/logo.svg",
     "light": "/logo/logo.svg",
@@ -21,20 +21,21 @@
         "href": "mailto:contact@molpha.io"
       },
       {
-        "label": "github",
+        "label": "GitHub",
         "icon": "github",
         "href": "https://github.com/molpha"
       },
       {
-        "label": "",
+        "label": "Discord",
         "icon": "discord",
         "href": "https://discord.molpha.io"
-      },
-      {
-        "label": "SDK",
-        "href": "https://www.npmjs.com/package/@molpha/sdk"
       }
-    ]
+    ],
+    "primary": {
+      "type": "button",
+      "label": "npm",
+      "href": "https://www.npmjs.com/package/@molpha/sdk"
+    }
   },
   "navigation": {
     "tabs": [
@@ -42,31 +43,24 @@
         "tab": "Documentation",
         "groups": [
           {
-            "group": "Get Started",
+            "group": "Get started",
             "pages": [
               "index",
-              "getting-started/introduction",
-              "getting-started/how-it-works"
-            ]
-          },
-          {
-            "group": "Quickstarts",
-            "pages": [
               "quickstarts/ai-agents",
-              "quickstarts/smart-contracts",
               "quickstarts/backend",
-              "getting-started/quickstart"
+              "quickstarts/smart-contracts"
             ]
           },
           {
-            "group": "AI Agents",
+            "group": "Concepts",
             "pages": [
-              "agents/overview",
-              "mcp/molpha-mcp"
+              "concepts/feeds",
+              "concepts/attestations",
+              "concepts/registry-versions"
             ]
           },
           {
-            "group": "Access Models",
+            "group": "Access and payments",
             "pages": [
               "access-models/overview",
               "access-models/subscriptions",
@@ -75,46 +69,22 @@
             ]
           },
           {
-            "group": "Core Concepts",
+            "group": "MCP server",
             "pages": [
-              "concepts/feeds",
-              "concepts/rounds-and-signatures",
-              "concepts/registry-versions",
-              "concepts/payloads"
+              "mcp/overview",
+              "mcp/hosted",
+              "mcp/local",
+              "mcp/tools"
             ]
           },
           {
-            "group": "Guides",
-            "pages": [
-              "guides/create-and-update",
-              "guides/read-and-verify",
-              "guides/verify-on-evm",
-              "guides/verify-on-starknet"
-            ]
-          },
-          {
-            "group": "Gateways",
-            "pages": [
-              "gateways/overview",
-              {
-                "group": "Gateway API",
-                "pages": [
-                  "gateways/api/health",
-                  "gateways/api/nodes",
-                  "gateways/api/round-execute",
-                  "gateways/api/agent-execute",
-                  "gateways/api/agent-status"
-                ]
-              }
-            ]
-          },
-          {
-            "group": "Verifiers",
+            "group": "Verify and publish",
             "pages": [
               "verifiers/overview",
               "verifiers/solana",
               "verifiers/evm",
               "verifiers/starknet",
+              "guides/create-and-update",
               "verifiers/deployments"
             ]
           },
@@ -123,13 +93,8 @@
             "pages": [
               "protocol/architecture",
               "protocol/cryptography",
+              "protocol/solana-program",
               "protocol/security-model"
-            ]
-          },
-          {
-            "group": "Reference",
-            "pages": [
-              "reference/payload-schema"
             ]
           },
           {
@@ -143,7 +108,44 @@
         ]
       },
       {
-        "tab": "SDK Reference",
+        "tab": "API reference",
+        "groups": [
+          {
+            "group": "Gateway API",
+            "pages": [
+              "gateways/overview"
+            ]
+          },
+          {
+            "group": "Rounds",
+            "pages": [
+              "gateways/api/round-execute",
+              "gateways/api/x402-execute",
+              "gateways/api/x402-status"
+            ]
+          },
+          {
+            "group": "Sign-in sessions",
+            "pages": [
+              "gateways/api/session-challenge",
+              "gateways/api/session-create",
+              "gateways/api/session-delete"
+            ]
+          },
+          {
+            "group": "Network",
+            "pages": [
+              "gateways/api/info",
+              "gateways/api/nodes",
+              "gateways/api/providers-list",
+              "gateways/api/providers-get",
+              "gateways/api/health"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "SDK",
         "groups": [
           {
             "group": "TypeScript SDK",
@@ -174,14 +176,24 @@
       "expanded": "all"
     },
     "examples": {
-      "languages": ["curl", "javascript", "python", "go"],
+      "languages": [
+        "curl",
+        "javascript",
+        "python",
+        "go"
+      ],
       "defaults": "required",
       "prefill": true,
       "autogenerate": true
     }
   },
   "contextual": {
-    "options": ["copy", "download-spec", "chatgpt", "claude"]
+    "options": [
+      "copy",
+      "download-spec",
+      "chatgpt",
+      "claude"
+    ]
   },
   "seo": {
     "indexing": "navigable",
@@ -203,5 +215,59 @@
         "https://www.linkedin.com/company/molpha-oracle"
       ]
     }
-  }
+  },
+  "redirects": [
+    {
+      "source": "/getting-started/introduction",
+      "destination": "/"
+    },
+    {
+      "source": "/getting-started/how-it-works",
+      "destination": "/"
+    },
+    {
+      "source": "/getting-started/quickstart",
+      "destination": "/quickstarts/backend"
+    },
+    {
+      "source": "/agents/overview",
+      "destination": "/mcp/overview"
+    },
+    {
+      "source": "/mcp/molpha-mcp",
+      "destination": "/mcp/overview"
+    },
+    {
+      "source": "/concepts/rounds-and-signatures",
+      "destination": "/concepts/attestations"
+    },
+    {
+      "source": "/concepts/payloads",
+      "destination": "/concepts/attestations"
+    },
+    {
+      "source": "/reference/payload-schema",
+      "destination": "/concepts/attestations"
+    },
+    {
+      "source": "/guides/read-and-verify",
+      "destination": "/verifiers/solana"
+    },
+    {
+      "source": "/guides/verify-on-evm",
+      "destination": "/verifiers/evm"
+    },
+    {
+      "source": "/guides/verify-on-starknet",
+      "destination": "/verifiers/starknet"
+    },
+    {
+      "source": "/gateways/api/agent-execute",
+      "destination": "/gateways/api/x402-execute"
+    },
+    {
+      "source": "/gateways/api/agent-status",
+      "destination": "/gateways/api/x402-status"
+    }
+  ]
 }

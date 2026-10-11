@@ -1,166 +1,434 @@
 ---
-title: "SDK Reference"
-description: "Exported types, derivation helpers, and the framework-agnostic EVM/Starknet verifier-argument builders."
+title: "SDK reference"
+sidebarTitle: "Reference"
+description: "Exported classes, types, helpers, constants and errors of @molpha/sdk, grouped by area."
 ---
 
-## `RequestSignedDataOptions`
+Every public export of `@molpha/sdk`, grouped by area. For usage, see the [SDK overview](/sdk/overview) and the [gateway client](/sdk/gateway-api). Hex strings are lowercase without `0x` unless noted.
 
-Options for `MolphaGateway.requestSignedData` and the second argument to `MolphaSDK.requestAndSubmit` (omit `feedId` there — it is the first argument):
+## Clients
+
+### `MolphaSDK`
 
 ```ts
-export interface RequestSignedDataOptions {
-  feedId: string;
-  signaturesRequired: number;
-  apiConfig: APIConfig;
-  subscriptionOwner?: string;
-  consumerAuthority?: string;
-  /** Override gateway auth signer for this call. */
-  signer?: Signer;
-  /** Encrypt private API secrets for selected nodes. */
+new MolphaSDK(opts: MolphaSDKOptions)
+```
+
+| Member | Type |
+|---|---|
+| `gateway` | [`MolphaGateway`](/sdk/reference#molphagateway) |
+| `solana` | [`MolphaSolanaClient`](/sdk/reference#molphasolanaclient) |
+| `requestAndSubmit(opts: RequestSignedDataOptions)` | `Promise<{ result: Attestation; signature: string; feed: Address }>`. Throws [`SubmitFailedError`](/sdk/reference#errors) when the submit fails after a successful round. |
+
+`MolphaSDKOptions` (`connection`, `wallet`, `endpoints?`, `programId?`, `idl?`, `commitment?`) is described in [Initialize](/sdk/overview#initialize).
+
+### `MolphaGateway`
+
+```ts
+new MolphaGateway(
+  endpoints?: GatewayEndpointInput | GatewayEndpointInput[],
+  getRegistrySelectionConfig?: () => Promise<RegistrySelectionConfig>,
+  defaultSigner?: Signer,
+  options?: string | MolphaGatewayOptions, // a string is the default subscription owner
+  defaultConsumerAuthority?: string,
+)
+```
+
+A standalone gateway client needs `getRegistrySelectionConfig` (for example `() => solana.getRegistrySelectionConfig()`) or a full `context` on each request; without either, `requestSignedData` throws.
+
+| Method | Returns | Notes |
+|---|---|---|
+| `requestSignedData(opts)` | `Promise<Attestation>` | See [`requestSignedData`](/sdk/gateway-api#requestsigneddata). |
+| `prepareContext()` | `Promise<RoundContext>` | See [`prepareContext`](/sdk/gateway-api#preparecontext). |
+| `getNodes()` | `Promise<Node[]>` | `GET /v1/nodes` from the first endpoint that answers. |
+| `getNodesInfo()` | `Promise<NodesInfo>` | Nodes plus the gateway's advisory `registry` block (`version`, `nodeCount`, `redundancyBuffer`). Prefer the on-chain read. |
+| `fetchGatewayInfo(endpoint, timeoutMs?)` | `Promise<GatewayInfo>` | `GET /v1/info`. Throws if the gateway's `programId` differs. |
+| `isHealthy()` | `Promise<boolean>` | `true` if any endpoint answers `GET /health`. |
+| `endpointUrls()` | `string[]` | Configured base URLs in failover order. |
+| `programId` | `string` | Program the request auth is bound to. |
+
+`MolphaGatewayOptions`: `defaultSubscriptionOwner`, `defaultConsumerAuthority`, `programId` (default `MOLPHA_PROGRAM_ID`), `verifyNodeKeys`, `allowUnverifiedNodeKeysForPrivateApi` (default `false`; unsafe), and the test hooks `random` and `sleep`.
+
+| Type | Shape |
+|---|---|
+| `GatewayEndpointInput` | `string \| GatewayEndpoint` |
+| `GatewayEndpoint` | `{ url: string; gatewayAuthority?: string }` |
+| `GatewayInfo` | `{ gatewayAuthority: string; programId?: string; roundTimeoutSeconds?: number; maxInflightRounds?: number }` |
+| `Node` | `{ index: number; peerId: string; address: string; signingKey: string }` (`index` is the signers-bitmap bit) |
+| `NodeKeyVerifier` | `(args: NodeKeyVerifierArgs) => void \| Promise<void>`; throwing aborts a private-API request |
+| `Signer` | `(message: Uint8Array) => Promise<Uint8Array>`, a 64-byte ed25519 signature |
+
+### `MolphaSolanaClient`
+
+```ts
+MolphaSolanaClient.create({ connection, wallet, programId?, idl?, commitment? })
+```
+
+| Method | Returns | Notes |
+|---|---|---|
+| `getPlan(plan: PlanType)` | `Promise<PlanInfo>` | Throws if the plan account does not exist. |
+| `readPlan(plan)` | `Promise<PlanInfo \| null>` | |
+| `subscribe(plan, { maxPriceUsdc, ownerUsdc? })` | `Promise<SubscribeResult>` | Debits the plan price in USDC. Aborts before sending if the on-chain price exceeds `maxPriceUsdc` (base units). `ownerUsdc` defaults to the owner's USDC associated token account. |
+| `extendSubscription({ maxPriceUsdc, ownerUsdc? })` | `Promise<SubscribeResult>` | Renews for another period, same price check. |
+| `readSubscription(owner?)` | `Promise<SubscriptionInfo \| null>` | Defaults to this wallet. |
+| `submitAttestation(attestation, opts?)` | `Promise<SubmitResult>` | Sends `submit_attestation`; creates the `Feed` account on first use. See [`SubmitAttestationOptions`](/sdk/reference#submit-options). |
+| `submitAttestations(attestations, opts?)` | `Promise<SubmitAttestationsResult>` | See [batch submit](/sdk/reference#batch-submit). |
+| `readFeed(sourceId, signaturesRequired, submitter?)` | `Promise<FeedAccount \| null>` | `sourceId` as hex. `submitter` defaults to this wallet. |
+| `getRegistrySelectionConfig()` | `Promise<Required<RegistrySelectionConfig>>` | Current `registryVersion`, `redundancyBuffer`, `nodeCount`. |
+| `getRegistryVersion()` | `Promise<number>` | |
+| `readRegistry(version?)` | `Promise<RegistryView>` | Defaults to the current version. |
+| `verifyNodeKeysForPrivateApi(args)` | `Promise<void>` | Checks gateway node keys against on-chain `Node` accounts. |
+| `programId` | `Address` | |
+
+| Type | Fields |
+|---|---|
+| `PlanInfo` | `planType`, `subscriptionPrice: bigint` (USDC base units), `maxSigners`, `maxDelegates`, `maxRounds: bigint`, `privateApiEnabled`, `isActive` |
+| `SubscriptionInfo` | `owner`, `planType`, `validUntil: bigint` (unix seconds), `maxRounds: bigint`, `delegateCount`, `maxDelegates`, `maxSigners`. Round usage is counted by the gateway, not on-chain. |
+| `SubscribeResult` | `signature: string`, `pricePaid: bigint` |
+| `SubmitResult` | `signature: string`, `feed: Address` |
+| `SubmitAttestationsResult` | `SubmitResult` plus `count: number` |
+| `RegistryView` | `version`, `nodeCount`, `redundancyBuffer`, `nodes: Address[]`, `graceActiveUntil: bigint` (`0n` while current), `activeFrom: bigint` |
+| `RegistryStateView` | `currentVersion`, `nextVersion` |
+
+#### `FeedAccount`
+
+The decoded Solana `Feed` account (see [feeds](/concepts/feeds)):
+
+| Field | Type | Meaning |
+|---|---|---|
+| `value` | `Uint8Array \| number[]` | The signed 32-byte `payload.value`, or `keccak256(rawValue)` when `valueKind` is `hash`. Decode it per your source; tolerance-mode values are `int256` (see [int256 helpers](/sdk/reference#int256-helpers)). |
+| `valueKind` | `{ value: {} } \| { hash: {} }` | |
+| `timestamp` | `BN` | Round timestamp, unix milliseconds. |
+| `sourceId`, `signersBitmap` | `number[]` | |
+| `signaturesRequired`, `registryVersion`, `bump` | `number` | |
+| `submitter` | `Address` | |
+
+#### Submit options
+
+`SubmitAttestationOptions`:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `computeUnitLimit` | `estimateSubmitComputeUnits(signerCount)` | Compute-unit limit. |
+| `priorityFeeMicroLamports` | none | A number, or `"auto"` for the 75th percentile of recent fees on the feed, capped at 1 lamport per unit. |
+| `coalitionKey` | computed | Sum of the signers' keys. By default the SDK reads the signer `Node` accounts and computes it. |
+| `rawValue` | none | Preimage (≤ 256 bytes) when `payload.value` is its keccak256. The feed stores the digest with `valueKind.hash`. |
+
+### Batch submit
+
+```ts
+const { signature, feed, count } = await sdk.solana.submitAttestations(attestations);
+```
+
+Sends one `submit_attestation` instruction per attestation, in timestamp order, in one transaction.
+
+- All attestations must share `sourceId` and `signaturesRequired` and have distinct timestamps. Registry version and signer set may differ.
+- The transaction is atomic: if one instruction fails (typically because a newer value landed first), none applies.
+- `rawValue` is not supported; submit those with `submitAttestation`.
+- If they do not fit in one transaction, it throws `BatchTooLargeError` before sending.
+- `opts` takes `computeUnitLimit` and `priorityFeeMicroLamports` (`SubmitAttestationsOptions`).
+
+Sizing helpers:
+
+| Function | Returns |
+|---|---|
+| `maxAttestationsPerTransaction(signerCount, { distinctSigners?, priorityFee? }?)` | How many attestations with that many signers fit in one transaction. |
+| `estimateSubmitTransactionSize(count, signerCount, { distinctSigners?, priorityFee? }?)` | Serialized transaction size, in bytes. |
+| `estimateSubmitComputeUnits(signerCount)` | Compute-unit limit for one submit. |
+| `estimateSubmitBatchComputeUnits(signerCounts)` | Compute-unit limit for a batch. |
+| `SUBMIT_INSTRUCTION_DATA_BYTES` | `234`, instruction data size without a raw value. |
+
+### `requestMany`
+
+```ts
+requestMany(sdk: MolphaSDK, feeds: BulkFeed[], opts?: BulkOptions): Promise<BulkResult[]>
+```
+
+Updates many feeds. Reads the registry once, bounds concurrency adaptively (halves on 503/429, grows on success) and runs Solana submits on a separate limiter. Results come back in input order, and one feed failing does not stop the others.
+
+| `BulkOptions` | Default | Meaning |
+|---|---|---|
+| `concurrency` | half the gateway's `maxInflightRounds` (max 64), or 32 | Ceiling on gateway requests in flight. |
+| `spreadMs` | `0` | Spread request starts over this window by a hash of the `sourceId`. |
+| `submit` | `true` | Submit each attestation to Solana. |
+| `submitConcurrency` | `8` | Solana submits in flight. |
+| `request` | none | `RequestSignedDataOptions` applied to every feed, except `apiConfig`, `signaturesRequired` and `context`. |
+| `onResult` | none | Called as each feed finishes. |
+| `signal` | none | `AbortSignal`; stops starting new feeds. |
+
+`BulkFeed` is `{ apiConfig, signaturesRequired, label? }`. `BulkResult` has `index`, `label?`, `ok` (round succeeded), `attestation?`, `signature?`, `feedAddress?`, `error?` and `submitError?`; `attestation` is kept when only the submit failed. Also exported: `AdaptiveLimiter` and `spreadOffsetMs(sourceIdHex, spreadMs)`.
+
+## Request and result types
+
+### `RequestSignedDataOptions`
+
+```ts
+interface RequestSignedDataOptions {
+  apiConfig: APIConfig;            // determines sourceId; pass the same config every time
+  signaturesRequired: number;      // u8; tolerance mode requires >= 3
+  subscriptionOwner?: string;      // base58; MolphaSDK default: wallet public key
+  consumerAuthority?: string;      // base58; default: subscriptionOwner
+  signer?: Signer;                 // RequestAuth signer for this call
   encrypt?: { secrets: Record<string, string> };
-  /** Max accepted value age in seconds. Default 60. */
-  maxAge?: number;
-  /** Each retry re-rolls the timestamp. Default 15. */
-  maxRetries?: number;
-  /** Per-request timeout in ms. Default 5000. */
-  timeoutMs?: number;
-  /** Reuse registry + nodes from `prepareContext` (opt-in cache). */
-  context?: Partial<RoundContext>;
+  sourcePayment?: SourcePaymentOptions;
+  maxAge?: number;                 // seconds, default 60
+  maxRetries?: number;             // attempts, default DEFAULT_MAX_RETRIES (6)
+  timeoutMs?: number;              // per request, default DEFAULT_ROUND_TIMEOUT_MS (35000)
+  context?: Partial<RoundContext>; // any field present skips its fetch
   verifyNodeKeys?: NodeKeyVerifier;
-  /** Unsafe: skip node-key auth for private APIs. Default false. */
-  allowUnverifiedNodeKeysForPrivateApi?: boolean;
+  allowUnverifiedNodeKeysForPrivateApi?: boolean; // unsafe, default false
 }
 ```
 
-`apiConfig` must match the feed's committed configuration (same shape passed to `deriveApiConfigHash`). `maxAge` (seconds) sets the maximum accepted payload age on the client. Live gateway rounds return `fresh: true`; the HTTP gateway does not cache results ([OpenAPI](/gateways/api/round-execute)).
+Behaviour of each option is described in [`requestSignedData`](/sdk/gateway-api#requestsigneddata).
 
-## `APIConfig`
+### `APIConfig`
 
 ```ts
-export interface APIConfig {
+interface APIConfig {
   url: string;
-  method?: "GET" | "POST" | "PUT";
-  headers?: Record<string, string>;
+  method?: "GET" | "POST" | "PUT"; // canonical default "GET"
+  headers?: Record<string, string>; // canonical default {}, keys sorted
   responseParser: string;
-  valueTransform?: string;
+  valueTransform?: string;          // canonical default ""
+  aggregation?: AggregationConfig;  // omit for exact mode
+}
+
+interface AggregationConfig {
+  mode: "tolerance";
+  rule: "median";
+  maxDeviationBps: number;          // u32, deviation from the lower median
+  maxAgeMs: number;                 // positive integer, max observation age
+  numeric: NumericConfig;           // { type: "int256"; decimals: number } (0..255)
 }
 ```
 
-The SDK canonicalizes missing fields (`method` → `"GET"`, `headers` → `{}`, `valueTransform` → `""`) before hashing and before posting to the gateway.
+Without `aggregation`, every signer must fetch the identical value. With it, the selected nodes exchange signed observations, drop stale ones and outliers beyond `maxDeviationBps`, and sign the lower median of `signaturesRequired` surviving values as an `int256` scaled by `10^decimals`. `aggregation` is part of the `sourceId` and needs `signaturesRequired >= 3` (`MIN_TOLERANCE_SIGNATURES`). `mode: "exact"` is rejected with `AggregationConfigError`.
 
-## `RoundContext`
-
-Returned by `sdk.gateway.prepareContext(feedId)` — pass it back via `requestSignedData({ ..., context })` so each round is a single gateway POST:
+### `RoundContext`
 
 ```ts
-export interface RoundContext {
+interface RoundContext {
   registryVersion: number;
   redundancyBuffer: number;
-  nodes: Node[];
+  nodeCount?: number; // Registry.node_count of the snapshot
+  nodes: Node[];      // full node set of the registry version
 }
 ```
 
-Caching is opt-in. Refresh when the on-chain registry version changes; a stale context produces a result the chain will reject.
+Returned by `prepareContext()`. `RegistrySelectionConfig` is the same without `nodes`.
 
-## `DataUpdateResult`
+### `Attestation`
 
-A completed gateway round, ready to submit on-chain:
+A completed round. `payload` and `signature` are signed; `value` and `fresh` are gateway metadata. Field meanings and the signed message are in [attestations](/concepts/attestations).
 
 ```ts
-export interface DataUpdateResult {
-  feedId: string;
-  /** Human-readable value. */
-  value: string;
-  /** 32-byte packed value, hex. */
-  valuePacked: string;
-  /** canonicalTimestamp (seconds). */
-  timestamp: number;
+interface Attestation {
+  payload: AttestationPayload;
+  signature: SchnorrSignature;
+  value: string;   // human-readable value, not signed; for tolerance mode, payload.value at numeric.decimals
+  fresh: boolean;  // true for live rounds
+}
+
+interface AttestationPayload {
+  value: string;              // 32 bytes, hex: the signed value
+  sourceId: string;           // 32 bytes, hex
   registryVersion: number;
   signaturesRequired: number;
-  /** 32-byte big-endian bitmap, hex. */
-  signersBitmap: string;
-  /** 32-byte scalar, hex. */
-  s: string;
-  /** 20-byte commitment address, hex. */
-  commitmentAddr: string;
-  /** Whether the value was freshly fetched this round. */
-  fresh: boolean;
+  timestamp: number;          // unix milliseconds, assigned by the gateway
+}
+
+interface SchnorrSignature {
+  s: string;                  // 32-byte scalar, hex
+  commitmentAddr: string;     // 20-byte commitment address, hex
+  signersBitmap: string;      // 32-byte big-endian bitmap, hex
 }
 ```
 
-## `MolphaWallet`
-
-Anchor `Wallet` plus optional gateway auth. Keypair-backed wallets (`walletFromKeypairFile`) derive auth from `Wallet.payer` automatically; browser adapters should supply `signAuthMessage`:
+### `MolphaWallet`
 
 ```ts
-type MolphaWallet = Wallet & {
-  signAuthMessage?: (msg: Uint8Array) => Promise<Uint8Array>;
-};
+type MolphaWallet = Wallet & { signAuthMessage?: Signer };
 ```
 
-## `PlanType`
+`Wallet` is the `@anchor-lang/core` type. Without `signAuthMessage`, gateway auth is derived from `Wallet.payer`. See [Wallet](/sdk/overview#wallet).
 
-```ts
-enum PlanType {
-  Basic = 0,
-  // Standard / Professional / Enterprise reserved (on-chain ordinals 1–3)
-}
-```
-
-The SDK currently exports `Basic`. On-chain plan IDs remain `0…3`.
-
-## Derivation helpers
-
-```ts
-// feedId = keccak256("MOLPHA_JOB_V1" || owner || apiConfigHash || [signaturesRequired])
-export function deriveFeedId(
-  owner: Uint8Array,
-  apiConfigHash: Uint8Array,
-  signaturesRequired: number,
-): Uint8Array;
-
-export function deriveFeedIdString(
-  owner: Uint8Array,
-  apiConfigHash: Uint8Array,
-  signaturesRequired: number,
-): string;
-
-// 32-byte keccak commitment to the canonicalized API config
-export function deriveApiConfigHash(apiConfig: APIConfig): Uint8Array;
-```
-
-`owner` and `apiConfigHash` must be exactly 32 bytes. `signaturesRequired` is encoded as one byte.
-
-## `buildEvmVerifierArgs`
-
-Converts a `DataUpdateResult` into the two structs the EVM verifier's `verify()` takes — a pure mapping with zero runtime dependency (use the output with ethers, viem, or a raw `eth_call`).
-
-| Gateway `DataUpdateResult` | EVM struct field |
+| Export | Purpose |
 |---|---|
-| `feedId` | First `DataUpdate` bytes32 field |
-| `registryVersion` | `DataUpdate.registryVersion` |
-| `signaturesRequired` | `DataUpdate.signaturesRequired` |
-| `valuePacked` | `DataUpdate.value` |
-| `timestamp` | `DataUpdate.canonicalTimestamp` |
-| `s` | `SchnorrSignature.signature` |
-| `commitmentAddr` | `SchnorrSignature.commitment` |
-| `signersBitmap` | `SchnorrSignature.signersBitmap` |
+| `gatewaySignerFromWallet(wallet)` | The wallet's auth `Signer`, or `undefined`. |
+| `signerFromKeypair(keypair)` | An ed25519 `Signer` from a Solana keypair. |
+| `walletFromKeypairFile(path)` (`@molpha/sdk/utils`) | `MolphaWallet` from a Solana CLI keypair file. Node only. |
+| `loadKeypair(path)` (`@molpha/sdk/utils`) | `Keypair` from a Solana CLI keypair file. Node only. |
 
-Pass the `feedId` bytes as the first `DataUpdate` field. See [Verify on EVM](/guides/verify-on-evm) for the consumer-contract side.
+### `PlanType`
 
-## `buildStarknetVerifierArgs`
+```ts
+enum PlanType { Basic = 0, Standard = 1, Professional = 2, Enterprise = 3 }
+```
 
-Converts a `DataUpdateResult` into the Cairo verifier's calldata structs, with no starknet.js runtime dependency.
+The values are the on-chain plan ordinals (`PlanId`). `planVariant(planId)` and `planIdFromVariant(variant)` convert to and from the Anchor enum form.
 
-| Gateway `DataUpdateResult` | Cairo struct field | Cairo type |
+## Source identity and values
+
+### Derivation helpers
+
+| Function | Returns |
+|---|---|
+| `canonicalizeAPIConfig(apiConfig)` | The canonical config that is hashed and posted. Throws `AggregationConfigError` on an invalid `aggregation`. |
+| `deriveSourceId(apiConfig)` | `Uint8Array`, `keccak256(JSON.stringify(canonicalizeAPIConfig(apiConfig)))`. |
+| `deriveSourceIdString(apiConfig)` | The same as 64 hex characters. |
+| `canonicalizeAggregation(aggregation)` | Validated `aggregation` in canonical key order, or `undefined`. |
+| `assertAggregationQuorum(aggregation, signaturesRequired)` | Throws `AggregationConfigError` when tolerance mode has fewer than 3 signers. |
+
+The owner and `signaturesRequired` are not part of the `sourceId`; see [feeds](/concepts/feeds).
+
+### int256 helpers
+
+| Export | Purpose |
+|---|---|
+| `decodeInt256(value)` | Two's-complement `bytes32` (bytes or hex) to `bigint`. |
+| `formatInt256Decimal(value, decimals)` | Render as a decimal string at `decimals` places, trailing zeros trimmed. |
+| `encodeInt256(value)` | `bigint` to `bytes32`. |
+| `encodeInt256Decimal(decimal, decimals)` | Decimal string to the `bytes32` nodes sign, rounded half to even. |
+| `INT256_MIN`, `INT256_MAX` | Range bounds. |
+
+### Message and selection helpers
+
+| Export | Purpose |
+|---|---|
+| `attestationMessageHash(fields)` | The 32-byte signed message hash. |
+| `attestationMessageHashFromAttestation(attestation)` | The same, from an `Attestation`. |
+| `MESSAGE_PREFIX` | `keccak256("MOLPHA_MESSAGE_V1")`. |
+| `deriveSelectionSeed(sourceId, registryVersion, timestamp)`, `deriveGroupBitmap(seed, nodeCount, groupSize)`, `deriveSelectionBitmap(sourceId, registryVersion, nodeCount, signaturesRequired, redundancy?, ts?)` | Committee selection. `timestamp` is in milliseconds and hashed as `timestamp / 1000` (`SELECTION_WINDOW_MS` = `1000n`). |
+| `effectiveSelectionSize(signaturesRequired, redundancyBuffer, nodeCount)` | `min(signaturesRequired + redundancyBuffer, nodeCount)`. |
+| `bitmapBitSet(bitmap, bit)`, `selectedIndices(bitmap, nodeCount)`, `bitmapToIndices(hex)` | Read bitmaps. |
+| `computeCoalitionKey(keys)`, `resolveRemainingAccounts(signersBitmapHex, registry)`, `buildSubmitAttestationArgs(attestation, coalitionKey, rawValue?)` | Build `submit_attestation` by hand: signer key sum, signer `Node` accounts in bit order, Anchor arguments. |
+
+The math is described in [attestations](/concepts/attestations).
+
+### Timing helpers
+
+| Export | Meaning |
+|---|---|
+| `ROUND_TICK_MS` | `100`. The gateway floors a round's timestamp to this grid. See [round timing](/concepts/attestations#round-timing). |
+| `timestampSeconds(timestamp)` | Attestation timestamp (ms) as whole unix seconds, floored. |
+| `timestampAgeSeconds(timestamp, nowSeconds)` | Age in whole seconds, never negative. |
+
+## Verifier arguments
+
+### `buildEvmVerifierArgs`
+
+```ts
+import { buildEvmVerifierArgs, parseEvmVerifyResult, MOLPHA_VERIFIER_ABI } from "@molpha/sdk";
+
+const { attestation, maxAge } = buildEvmVerifierArgs(result, { maxAge: 60 });
+```
+
+Maps an `Attestation` onto `verify(Attestation calldata, uint64 maxAge)` of the [EVM verifier](/verifiers/evm). `maxAge` (seconds) is required; `0` disables the freshness check. Integers are range-checked against their Solidity types (`RangeError`).
+
+`signature.s` becomes `signature.signature` and `commitmentAddr` becomes `commitment`; `timestamp` and `signersBitmap` become `bigint`. The full struct layout is on the [EVM verifier](/verifiers/evm) page.
+
+| Export | Purpose |
+|---|---|
+| `MOLPHA_VERIFIER_ABI` | `verify` plus the read-only registry views. |
+| `encodeEvmVerifyCalldata(args)` | Calldata for a raw `eth_call`. |
+| `parseEvmVerifyResult(result)` | Raw return data or a decoded tuple to `{ success, code, reason }`. Throws if `success` and `code` disagree. |
+| `toFixedHex`, `signersBitmapToUint256`, `signersBitmapToDecimal` | Conversions. |
+| Types | `EvmVerifierArgs`, `EvmAttestation`, `EvmAttestationPayload`, `EvmSchnorrSignature`, `EvmVerifyResult`, `BuildEvmVerifierArgsOptions`, `MolphaEvmNetwork` |
+
+### `buildStarknetVerifierArgs`
+
+```ts
+import { buildStarknetVerifierArgs, encodeStarknetVerifyCalldata } from "@molpha/sdk";
+
+const args = buildStarknetVerifierArgs(result, { maxAge: 60 });
+const calldata = encodeStarknetVerifyCalldata(args); // 13 felts, Cairo Serde order
+```
+
+Maps an `Attestation` onto `verify(attestation, max_age)` of the [Starknet verifier](/verifiers/starknet). `maxAge` is required, in seconds; `0` disables the freshness check.
+
+Field names become snake_case, 32-byte values become `u256` (`bigint`) and the commitment address becomes a `felt252`. The struct and calldata layout are on the [Starknet verifier](/verifiers/starknet) page.
+
+| Export | Purpose |
+|---|---|
+| `parseStarknetVerifyResult(result)` | Two felts or a decoded tuple to `{ success, code, reason }`. |
+| `commitmentAddressToStarknetFelt`, `signersBitmapToStarknetUint256` | Conversions. |
+| `getMolphaStarknetVerifierAddress(network)`, `MOLPHA_VERIFIER_STARKNET_ADDRESSES` | Verifier address by network (`"starknet-sepolia"`). |
+| Types | `StarknetVerifierArgs`, `StarknetAttestation`, `StarknetAttestationPayload`, `StarknetSchnorrSignature`, `StarknetVerifyResult`, `StarknetFeltLike`, `BuildStarknetVerifierArgsOptions`, `MolphaStarknetNetwork` |
+
+### Result codes
+
+`VERIFY_CODES` maps the names of the codes both verifiers return (`OK` = 0 through `STALE` = 10) to their numbers; the [EVM verifier](/verifiers/evm) page explains each one. `verifyCodeName(code)` returns the name, or `undefined` for a code this SDK does not know. Types: `VerifyCode`, `VerifyCodeName`.
+
+## Paywalled API sources
+
+Types and functions behind [`sourcePayment`](/sdk/gateway-api#paywalled-api-sources):
+
+| Export | Purpose |
+|---|---|
+| `SourcePaymentOptions` | `{ signer: EvmSigner; terms?: UpstreamTerms; assetDomain?: AssetDomain }` |
+| `EvmSigner` | `{ address: string; signDigest(digest): Promise<Uint8Array> }` |
+| `createEvmSignerFromPrivateKey(key)` | `EvmSigner` from a secp256k1 private key. The key stays in your process. |
+| `evmAddressFromPrivateKey(key)`, `toChecksumAddress(address)` | Address helpers. |
+| `probeSource(apiConfig, opts?)` | Read a source's own 402 terms, or `null` if it is not paywalled. |
+| `validateSuppliedTerms(terms, resource, assetDomain?)` | Validate caller-supplied terms. |
+| `signSourcePayments(terms, signer, count)` | Sign `count` EIP-3009 authorizations. |
+| `eligibleSetSize(signaturesRequired, { nodeCount, redundancyBuffer })` | Number of authorizations a round needs. |
+| `parseUpstreamQuote(body)` | `UpstreamQuote` from a gateway 402 body, or `null`. |
+| `transferWithAuthorizationDigest`, `transferWithAuthorizationHash`, `domainSeparator`, `EIP712_DOMAIN_TYPEHASH`, `TRANSFER_WITH_AUTHORIZATION_TYPEHASH` | EIP-712 building blocks. |
+| Types | `UpstreamTerms`, `UpstreamQuote`, `AssetDomain`, `Eip712Domain`, `TransferAuthorization` |
+
+## Solana addresses
+
+### PDA helpers
+
+Each helper takes the program id last (`MOLPHA_PROGRAM_ID` for the default deployment) and returns a base58 `Address`.
+
+| Helper | Seeds |
+|---|---|
+| `protocolConfigPda(programId)` | `["molpha_config"]` |
+| `registryStatePda(programId)` | `["molpha_registry"]` |
+| `registryPda(version, programId)` | `["molpha_registry", version as u32 LE]` |
+| `nodePda(authority, programId)` | `["molpha_node", authority]` |
+| `gatewayPda(authority, programId)` | `["molpha_gateway", gatewayAuthority]` |
+| `planPda(planId, programId)` | `["molpha_plan", [planType as u8]]` |
+| `subscriptionPda(owner, programId)` | `["molpha_subscription", owner]` |
+| `feedPda(sourceId, signaturesRequired, submitter, programId)` | `["molpha_feed", sourceId, [signaturesRequired], submitter]` |
+
+`feedPda` takes `sourceId` as 32 bytes (`deriveSourceId`), not hex. `deriveGatewayPda(authority, programId)` and `deriveGatewayPdaAddress(...)` are async variants used for request auth.
+
+### Request auth
+
+| Export | Purpose |
+|---|---|
+| `hashRequestAuth(fields)` | `keccak256(REQUEST_AUTH_DOMAIN \|\| encodeRequestAuth(fields))`, the digest the consumer signs. |
+| `encodeRequestAuth(fields)` | Borsh body of `RequestAuth` (`RequestAuthFields`: `programId`, `gateway`, `sourceId`, `signaturesRequired`, `authTimestamp` in seconds). |
+| `REQUEST_AUTH_DOMAIN` | Domain prefix. |
+| `normalizeEndpoint(input)`, `parseGatewayInfo(data)`, `addressToBytes(base58)` | Endpoint and identity helpers. |
+| `retryDelayMs(cause, failures, random?)` | Delay before the next attempt (`RetryCause`: `conflict`, `busy`, `error`). |
+
+## Constants
+
+| Constant | Value |
+|---|---|
+| `DEFAULT_GATEWAY_ENDPOINT` | `"https://gateway.molpha.io/"` |
+| `MOLPHA_PROGRAM_ID`, `MOLPHA_PROGRAM_ADDRESS` | `MoLF3pgVA9MENSuEujxNNSMaTo71aLyewaH5nrWfUZs` |
+| `MOLPHA_IDL` | Bundled Anchor IDL. |
+| `DEFAULT_MAX_RETRIES` | `6` |
+| `DEFAULT_ROUND_TIMEOUT_MS` | `35000` |
+| `MIN_TOLERANCE_SIGNATURES` | `3` |
+| `MOLPHA_VERIFIER_ADDRESS`, `MOLPHA_VERIFIER_STARKNET_SEPOLIA` | Verifier addresses bundled with the SDK. See [deployments](/verifiers/deployments). |
+
+Byte utilities are exported too: `bytesToHex`, `bytesToHex0x`, `hexToBytes`, `bytesToBase64`, `base64ToBytes`, `utf8`, `concatBytes`, `u8`, `u32be`, `u32le`, `u64be`, `u64le`, `u256beFromBigInt`, `bigIntFromBytesBe`, `ensureLength`, `toFixedBytes`, `normalizeSecp256k1PublicKeyHex` and `secp256k1PublicKeyFromCoordinates`.
+
+## Errors
+
+| Class | Thrown when | Fields |
 |---|---|---|
-| `feedId` | `data_update.feed_id` | `u256` |
-| `registryVersion` | `data_update.registry_version` | `u32` |
-| `signaturesRequired` | `data_update.signatures_required` | `u32` |
-| `valuePacked` | `data_update.value` | `u256` |
-| `timestamp` | `data_update.canonical_timestamp` | `u64` |
-| `s` | `schnorr_data.signature` | `u256` |
-| `commitmentAddr` | `schnorr_data.commitment` | `felt252` (low 160 bits) |
-| `signersBitmap` | `schnorr_data.signers_bitmap` | `u256` |
+| `GatewayError` | The gateway refused or failed a request, or its response is malformed or does not match the request. | `status?: number` |
+| `SubmitFailedError` | `requestAndSubmit` got an attestation but the Solana submit failed. | `result: Attestation`, `cause` |
+| `UpstreamPaymentRequiredError` | The API source is paywalled and there is no `sourcePayment`, or the source refused the payment. | `quote: UpstreamQuote` |
+| `BatchTooLargeError` (a `RangeError`) | `submitAttestations` got more than fits in one transaction. Nothing was sent. | `fits` (how many fit, oldest first), `size`, `limit`, `count` |
+| `AggregationConfigError` | `apiConfig.aggregation` is invalid, or tolerance mode has fewer than 3 signers. | none |
 
-See [Verify on Starknet](/guides/verify-on-starknet) for the consumer-contract side.
+Which HTTP statuses are retried is in [retries and errors](/sdk/gateway-api#retries-and-errors).

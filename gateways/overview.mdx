@@ -1,165 +1,99 @@
 ---
-title: "Gateways"
-description: "Gateways are Molpha's HTTP front door for signed data, payments, and agent access."
-icon: "cloud"
+title: "Gateway API"
+sidebarTitle: "Overview"
+description: "The HTTP API that admits round requests, takes payment, dispatches rounds to nodes and returns attestations."
 ---
 
-A gateway turns an application request into a Molpha signing round. It is the HTTP entry point to the oracle protocol: it discovers the registry, selects nodes, dispatches the API config over libp2p, collects partial Schnorr signatures on GossipSub, aggregates them, and returns a payload ready for verification. Agent endpoints are served only when `agent.enabled` is true in gateway configuration.
+The gateway is Molpha's HTTP entry point. It authenticates the caller, checks the subscription or the x402 payment, stamps the round's timestamp, dispatches the round to the selected nodes and returns the signed attestation. Gateways are operated by Molpha and registered on-chain by the protocol authority.
 
-For interactive request/response schemas and the API playground, use the [HTTP API](/gateways/api/round-execute) pages generated from `gateway-openapi.yaml`.
+Most integrations use the gateway through the [SDK](/sdk/gateway-api) or [MCP](/mcp/overview). Use the HTTP API directly when you work in another language or need full control.
 
-## Responsibilities
+## Base URL
 
-- Accept SDK, backend, and agent requests.
-- Authenticate owner-mode requests.
-- Quote and validate exact agent round pricing (`amount == price`).
-- Return x402 envelopes when pay-per-request escrow is underfunded.
-- Dispatch node rounds and collect aggregate signatures.
-- Maintain a settlement outbox for served rounds.
-- Self-host via YAML/env config (see [Self-hosting](#self-hosting) below).
-
-## Base URLs
-
-| Environment | URL | Notes |
-| --- | --- | --- |
-| Devnet | `https://dev-gateway.molpha.io` | SDK `DEFAULT_GATEWAY_ENDPOINT` |
+| Network | URL |
+| --- | --- |
+| Devnet | `https://gateway.molpha.io` |
 
 ## Endpoints
 
-| Method | Path | Audience | Payment model | Reference |
-| --- | --- | --- | --- | --- |
-| `POST` | `/v1/round/execute` | Feed owners and backends | Subscription / owner auth | [Execute a subscription round](/gateways/api/round-execute) |
-| `POST` | `/v1/agent/execute` | AI agents and one-off consumers | x402 or AgentEscrow | [Execute an x402 agent round](/gateways/api/agent-execute) |
-| `GET` | `/health` | Operators | — | [Health check](/gateways/api/health) |
-| `GET` | `/v1/nodes` | Operators | — | [Get configured nodes](/gateways/api/nodes) |
-| `GET` | `/v1/agent/{payer}/status` | Agents | — | [Advisory agent escrow status](/gateways/api/agent-status) |
+| Method | Path | Purpose | Auth |
+| --- | --- | --- | --- |
+| `POST` | [`/v1/round/execute`](/gateways/api/round-execute) | Run a round paid by a subscription | RequestAuth or session token |
+| `POST` | [`/v1/x402/execute`](/gateways/api/x402-execute) | Run a round paid per request | x402 payment |
+| `GET` | [`/v1/x402/status`](/gateways/api/x402-status) | x402 payee and price quote | None |
+| `GET` | [`/v1/info`](/gateways/api/info) | Gateway identity, program ID and auth settings | None |
+| `GET` | [`/v1/nodes`](/gateways/api/nodes) | The current on-chain node set | None |
+| `GET` | [`/v1/providers`](/gateways/api/providers-list), [`/v1/providers/{providerId}`](/gateways/api/providers-get) | Integrated data providers and their feeds | None |
+| `GET` | [`/v1/session/challenge`](/gateways/api/session-challenge) | Sign-in message to sign | None |
+| `POST`, `DELETE` | [`/v1/session`](/gateways/api/session-create) | Sign in / [sign out](/gateways/api/session-delete) | Signed message / token |
+| `GET` | [`/health`](/gateways/api/health) | Liveness | None |
 
-The TypeScript SDK gateway client and MCP server wrap these HTTP endpoints for application and AI clients.
+## Requests
 
-Agent endpoints require `agent.enabled: true` and a configured gateway keypair (`settlement.gateway_keypair_path`).
+A round request names a source by its `apiConfig`, a quorum (`signaturesRequired`) and the current `registryVersion`. You never send a `sourceId` or a timestamp:
 
-## Feed ID derivation
+- The gateway, SDK and nodes each derive the `sourceId` from the `apiConfig`. See [Source ID](/concepts/feeds#source-id).
+- The gateway stamps the round on a 100 ms grid after admitting it. See [Round timing](/concepts/attestations#round-timing).
+- `registryVersion` must equal the current on-chain version; a stale one gets `400`.
 
-Clients do not send an on-chain create transaction. The gateway and SDK derive the feed identity from the caller, config hash, and quorum:
+## Authentication
 
-```text
-feed_id = keccak256("MOLPHA_JOB_V1" || owner || api_config_hash || [signatures_required])
-```
+### RequestAuth
 
-- **Subscription path:** `owner` is `consumerAuthority`.
-- **Agent path:** `owner` is the payer.
-- `signatures_required` is appended as a single byte.
-
-The gateway derives `feedId` and echoes it in successful responses. The Solana `Feed` account is created lazily on first successful `submit_data_update`. Settlement creates a round receipt; it does not write the feed.
-
-## Subscription authentication
-
-For [`POST /v1/round/execute`](/gateways/api/round-execute), `consumerAuthority` signs:
+`POST /v1/round/execute` carries `subscriptionOwner`, `consumerAuthority` (the owner itself or one of its delegates), `authTimestamp` and `authSig`, an Ed25519 signature over:
 
 ```text
-hash = sha256("MOLPHA_REQAUTH_V1" || feed_id || uint64_le(timestamp))
+keccak256("MOLPHA_REQAUTH_V1" || programId || gatewayPda || sourceId || u8(signaturesRequired) || u64_le(authTimestamp))
 ```
 
-`feed_id` is derived from `(consumerAuthority, apiConfig, signaturesRequired)`. `timestamp` must be within the gateway clock skew window (default 300s). `registryVersion` must equal the current on-chain registry version. The signature is single-use per `(feed_id, timestamp)` — retries need a fresh timestamp and signature. An all-zero `authSig` is rejected.
+`authTimestamp` is unix **seconds**, and the gateway rejects it with `401` when it is further from its clock than `requestAuthWindowSeconds` (see `/v1/info`; 60 on devnet). Sign a fresh one for every request. RequestAuth only authorizes use of the subscription: it is not part of the round, the signed message or any payment.
 
-## x402 agent authentication
+### Sign-in sessions
 
-For [`POST /v1/agent/execute`](/gateways/api/agent-execute), the payer locks an exact USDC `amount` equal to the computed round price and signs `AgentRequestAuth`. Settlement via `settle_agent_round` is asynchronous.
+Instead of RequestAuth, a caller can sign in once and send `Authorization: Bearer <token>`. Sessions are available when [`GET /v1/info`](/gateways/api/info) reports `sessionAuth: true`.
 
-Round price (USDC atomic units):
+1. `GET /v1/session/challenge?address=<wallet>[&owner=<owner>]` returns the Sign-In-With-X message (`data.message`) and its terms (`data.info`).
+2. Sign the message's UTF-8 bytes with the wallet (Ed25519).
+3. `POST /v1/session` with a `SIGN-IN-WITH-X` header: base64 JSON of the `info` fields plus `address`, `chainId`, `type: "ed25519"`, `signatureScheme: "siws"` and the base58 `signature`. It answers `201` with `data.token` and `data.expiresAt`.
+4. Send `Authorization: Bearer <token>` on `POST /v1/round/execute`, with no `authSig` or `authTimestamp`.
+5. `DELETE /v1/session` signs out.
 
-```text
-price = protocol_config.agent_round_base
-      + signatures_required × protocol_config.agent_round_per_sig
-```
+A token is valid only at the gateway that issued it, for 30 minutes by default and never past the subscription term. It identifies the caller only: the subscription and delegate are checked against chain state (cached for a few seconds) on every round. The [hosted MCP server](/mcp/hosted#sign-in-with-your-wallet-siwx) wraps this flow.
 
-`AgentRequestAuth` hash:
+### x402
 
-```text
-body = borsh(agent_escrow_pda, gateway_pda, feed_id, canonical_timestamp_le, amount_le)
-hash = sha256("MOLPHA_AGENT_REQAUTH_V1" || body)
-sig  = ed25519_sign(payer, hash)
-```
+`POST /v1/x402/execute` takes no RequestAuth: the payment is the authorization. See [x402 pay-per-request](/access-models/x402).
 
-`agent_request_auth_sig` may be omitted on the unfunded first request of the 402 discovery flow. After funding the escrow ATA, retry with the **same** `canonical_timestamp` and the signature. See [x402 escrow](/access-models/x402) for the full payment loop.
+## Admission
 
-## Data response
+- **Subscription rounds** need an active subscription, a quorum within the plan's `max_signers`, and remaining quota. Quota is counted per 30-day term across the owner and its delegates, and a delegate's rounds also count against its own `max_data_requests`. A round that fails before completing gives its unit back.
+- **x402 rounds** need a verified payment of the quoted price to the protocol treasury.
+- The Solana program does not settle rounds individually; the gateway enforces payment and quota at admission.
 
-Successful round responses return the same signed payload shape from both execute paths. Live rounds always set `fresh: true`. Schema: `DataUpdateResponse` in the [OpenAPI spec](/gateways/api/round-execute).
+## Response
 
-## Serve lifecycle
+Both execute endpoints return `200` with `data.attestation`:
 
-1. Validate JSON, pubkeys, timestamps, and API config.
-2. Derive `api_config_hash` and `feed_id`.
-3. Verify request auth or x402 funding + `AgentRequestAuth`.
-4. Read advisory on-chain state.
-5. Reserve the round in the settlement outbox.
-6. Dispatch to nodes.
-7. Validate returned aggregate signature identity.
-8. Complete the outbox record (`pending`).
-9. Return the signed payload.
+- `payload`: `value`, `sourceId`, `registryVersion`, `signaturesRequired`, `timestamp` (unix ms)
+- `signature`: `signature`, `commitment`, `signersBitmap`
 
-Settlement worker drains `pending` rows into `settle_round_receipt` or `settle_agent_round` when `settlement.enabled` is true.
+plus a decimal `value`, `fresh`, and, in tolerance mode, `aggregation`. The x402 endpoint also returns a `PAYMENT-RESPONSE` header. Field meanings are in [Rounds and attestations](/concepts/attestations).
 
-## Round-record PDAs
+<Warning>
+A gateway response is not proof of anything on its own. Verify the attestation before you act on it: see the [consumer checklist](/verifiers/overview#consumer-checklist).
+</Warning>
 
-Replay protection is the unique round-record PDA `init`:
+## Status codes
 
-| Path | Seeds |
-| --- | --- |
-| Subscription / delegate | `["molpha_round", consumer_authority, api_config_hash, signatures_required, timestamp_le]` |
-| x402 agent | `["molpha_agent_round", authority, gateway, api_config_hash, signatures_required, canonical_timestamp_le]` |
+| Status | Meaning | What to do |
+| --- | --- | --- |
+| `400` | Invalid request, stale `registryVersion` or quorum out of range | Fix the request |
+| `401` | RequestAuth or session token invalid or expired | Sign again |
+| `402` | Payment required or rejected (x402), or the source itself is paywalled | Pay as instructed in `PAYMENT-REQUIRED` |
+| `403` | No active subscription, quota exhausted, or no delegate access | Check the subscription |
+| `404` | Session routes when sessions are disabled | Use RequestAuth |
+| `409` | You already have a round for this source and quorum in this 100 ms tick | Retry after one tick (100 ms plus jitter) |
+| `429` | Over the per-consumer rate limit | Wait for `Retry-After` |
+| `503` | Gateway at capacity, too few nodes accepted, or round timeout | Wait for `Retry-After` if present, then retry |
 
-## Self-hosting
-
-The gateway is a Go service configured by YAML and environment variables.
-
-```yaml
-server:
-  port: 8080
-
-solana:
-  rpc_url: https://api.devnet.solana.com
-  program_id: MoLFGDpFoVnQgwbkTNScKPohCxhbfd61JjFrnotuwzh
-  usdc_mint: 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
-
-agent:
-  enabled: true
-  protocol_config_ttl_seconds: 30
-  x402_network: solana-devnet
-  timestamp_skew_seconds: 300
-
-settlement:
-  enabled: true
-  db_path: data/settlement-outbox.db
-  gateway_keypair_path: /secure/path/gateway.json
-  settle_interval_seconds: 10
-  settle_batch_limit: 25
-  settle_max_attempts: 10
-```
-
-When `agent.enabled` is true, `settlement.gateway_keypair_path` is required because `AgentRequestAuth` binds the gateway PDA. If settlement is disabled, served rounds can remain pending indefinitely.
-
-Settlement uses the on-chain `protocol_config.usdc_mint`; `solana.usdc_mint` only overrides serve-time ATA derivation and must match on-chain.
-
-## Why gateways are first-class in Brebeneskul
-
-Brebeneskul adds economic routing around each request. The gateway is no longer only a convenience wrapper around nodes; it is also the coordination point for access models, payment checks, x402 envelopes, and settlement batching.
-
-## Operational notes
-
-- Use durable storage for the settlement outbox.
-- Monitor pending outbox records and round timeout rates.
-- Keep Solana RPC latency low for escrow and subscription reads.
-- Verify returned payloads before application use.
-
-## Related pages
-
-<CardGroup cols={2}>
-  <Card title="HTTP API" icon="code" href="/gateways/api/round-execute">
-    OpenAPI reference with schemas and interactive playground.
-  </Card>
-  <Card title="x402 escrow" icon="credit-card" href="/access-models/x402">
-    Pay-per-request agent access and settlement.
-  </Card>
-</CardGroup>
+`409`, `429` and capacity `503`s are returned before anything is reserved or spent. Any other retry is a new round that spends quota or a payment again.
