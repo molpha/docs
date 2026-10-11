@@ -12,8 +12,10 @@ The verifier is a stateless `view` contract. It checks that enough selected node
 The interface, result codes and consumer library live in [`molpha/evm-verifier`](https://github.com/molpha/evm-verifier) (Apache-2.0). Add it as a Foundry dependency:
 
 ```bash
-forge install molpha/evm-verifier
+forge install molpha/evm-verifier@chivchyn
 ```
+
+`chivchyn` is the release tag that matches the deployed verifier.
 
 ```toml remappings.txt
 @molpha/evm-verifier/=lib/evm-verifier/src/

@@ -6,62 +6,53 @@ Built with [Mintlify](https://mintlify.com).
 
 ## Contributor guide
 
-- [Protocol structure](development/protocol-structure.mdx)
-- [Component responsibilities and internals](development/components.mdx)
-- [Local and end-to-end testing](development/local-testing.mdx)
+The contributor guide is kept outside this repository, in `development-docs/` at the root of the multi-repository workspace: `protocol-structure.mdx`, `components.mdx` and `local-testing.mdx`. For coding agents in that workspace, start with the workspace-root `AGENTS.md`.
 
-For coding agents in the multi-repository workspace, start with the workspace-root
-`AGENTS.md`. The contributor guide records current source incompatibilities; old
-reports are historical evidence, not a guarantee that current checkouts interoperate.
+## Local development
 
-## Local Development
-
-Install the Mintlify CLI:
+Run the docs from the repo root (where `docs.json` lives) with the current Mintlify CLI:
 
 ```bash
-npm i -g mintlify
+npx mint@latest dev
 ```
 
-Run the docs locally from the repo root (where `docs.json` lives):
+The site is served at `http://localhost:3000`. An old globally installed `mintlify` or `mint` CLI can reject options in `docs.json` that the current schema allows; use the command above or update the CLI.
+
+Check links before opening a pull request:
 
 ```bash
-mintlify dev
+npx mint@latest broken-links
 ```
 
-The site will be available at `http://localhost:3000`.
+## Site structure
 
-## Site Structure
+Navigation is defined in `docs.json` and has three tabs:
 
-Navigation uses two top-level tabs:
-
-| Tab | Purpose |
+| Tab | Contents |
 | --- | --- |
-| **Documentation** | Start from developer journeys, then dive into agents, access models, gateways, verifiers, and protocol specs |
-| **SDK Reference** | `@molpha/sdk` overview, gateway client, and type reference |
-
-### Documentation sidebar
+| **Documentation** | Quickstarts, concepts, access and payments, MCP server, verifiers, protocol, resources |
+| **API reference** | Gateway API overview and one page per operation, generated from `gateway-openapi.yaml` |
+| **SDK** | `@molpha/sdk` overview, gateway client and reference |
 
 ```
-Documentation/
-├── Get Started/          # Home, introduction, how it works
-├── Quickstarts/          # AI agents, smart contracts, backend, legacy producer flow
-├── AI Agents/            # Agent overview and MCP integration
-├── Access Models/        # Subscriptions, Delegates, x402
-├── Core Concepts/        # Feeds, rounds & signatures, registry versions, payloads
-├── Guides/               # Create/update, read/verify, EVM & Starknet verification
-├── Gateways/             # Gateway overview and OpenAPI HTTP API
-├── Verifiers/            # Solana, EVM, Starknet, deployments
-├── Protocol/             # Architecture, cryptography, security
-├── Operators/            # Run gateway infrastructure
-├── Reference/            # Payload schema and specs
-└── Resources/            # Glossary, FAQ, releases
+index.mdx          Home
+quickstarts/       AI agents, backends, smart contracts
+concepts/          Sources and feeds, attestations, registry versions
+access-models/     Subscriptions, delegates, x402
+mcp/               MCP server: overview, hosted, local, tools
+verifiers/         Solana, EVM, Starknet, deployments
+guides/            Maintain a feed
+protocol/          Architecture, cryptography, Solana program, security model
+resources/         Glossary, FAQ, releases
+gateways/          Gateway API overview and operation stubs
+sdk/               TypeScript SDK
 ```
 
 ## Contributing
 
 1. Edit or add `.mdx` pages in the relevant folder.
 2. Register new pages in the `navigation` section of `docs.json`.
-3. Preview locally with `mintlify dev`.
+3. Preview locally with `npx mint@latest dev`.
 4. Open a pull request.
 
 ## Resources

@@ -5,7 +5,16 @@ description: "Request a threshold-signed attestation with the TypeScript SDK and
 icon: "server"
 ---
 
-Use the TypeScript SDK to subscribe, request a signed attestation for any API, publish it to a Solana feed, and build calldata for EVM and Starknet. You need a Solana devnet wallet with some Devnet SOL and Devnet USDC ([Circle faucet](https://faucet.circle.com/): choose **USDC** on **Solana Devnet**).
+Use the TypeScript SDK to subscribe, request a signed attestation for any API, publish it to a Solana feed, and build calldata for EVM and Starknet. You need a Solana devnet wallet with some Devnet SOL and Devnet USDC:
+
+```bash
+solana-keygen new                 # writes ~/.config/solana/id.json, skip if you have one
+solana airdrop 1 --url devnet     # SOL for transaction fees
+```
+
+Get Devnet USDC from the [Circle faucet](https://faucet.circle.com/) (choose **USDC** on **Solana Devnet**). Step 3 prints the subscription price before paying it.
+
+The SDK is ESM-only. Put the code below in one file, `quickstart.ts`, in a project whose `package.json` has `"type": "module"`, and run it with `npx tsx quickstart.ts`.
 
 <Steps>
   <Step title="Install">
@@ -36,9 +45,16 @@ Use the TypeScript SDK to subscribe, request a signed attestation for any API, p
     Gateway rounds from the SDK are paid by a subscription. Subscribe once with the signing wallet:
 
     ```ts
-    const plan = await sdk.solana.getPlan(PlanType.Basic);
-    await sdk.solana.subscribe(PlanType.Basic, { maxPriceUsdc: plan.subscriptionPrice });
+    if (!(await sdk.solana.readSubscription())) {
+      const plan = await sdk.solana.getPlan(PlanType.Basic);
+      console.log("price in USDC base units:", plan.subscriptionPrice); // 1 USDC = 1,000,000
+      await sdk.solana.subscribe(PlanType.Basic, { maxPriceUsdc: plan.subscriptionPrice });
+    }
     ```
+
+    <Warning>
+    `subscribe` transfers the plan price in Devnet USDC from your wallet and cannot be undone. It fails if the wallet already has a subscription, which is why the call is guarded.
+    </Warning>
 
     `maxPriceUsdc` aborts the transaction if the on-chain price is higher than you approved. Without a subscription (or [delegate](/access-models/delegates) access), the gateway answers `403`.
   </Step>
@@ -46,14 +62,14 @@ Use the TypeScript SDK to subscribe, request a signed attestation for any API, p
   <Step title="Define a source">
     ```ts
     const apiConfig = {
-      url: "https://api.example.com/v1/finalized/price",
-      responseParser: "$.price",
+      url: "https://api.drand.sh/public/1000", // a public, fixed JSON document
+      responseParser: "$.round",                // the number 1000
     };
     const signaturesRequired = 3;
     const sourceId = deriveSourceIdString(apiConfig); // needed later to read the feed
     ```
 
-    Pick an endpoint that returns the same value to every node, or use [tolerance mode](/concepts/feeds#exact-and-tolerance-mode) for live-moving numbers.
+    This example source never changes, so every node reads the same value. Replace it with your own API afterwards: pick an endpoint that returns the same value to every node, or use [tolerance mode](/concepts/feeds#exact-and-tolerance-mode) for live-moving numbers. `signaturesRequired` must be at least 3, the network minimum.
   </Step>
 
   <Step title="Request a signed attestation">

@@ -43,7 +43,7 @@ const sdk = new MolphaSDK({
 |---|---|---|
 | `connection` | required | Solana `web3.Connection`. |
 | `wallet` | required | A [`MolphaWallet`](/sdk/overview#wallet). Signs Solana transactions and gateway requests; its public key is the default subscription owner. |
-| `endpoints` | `DEFAULT_GATEWAY_ENDPOINT` (`https://dev-gateway.molpha.io/`) | A gateway URL, a `{ url, gatewayAuthority }` object, or an array of them for failover. See [endpoints](/sdk/gateway-api#endpoints). |
+| `endpoints` | `DEFAULT_GATEWAY_ENDPOINT` (`https://gateway.molpha.io/`) | A gateway URL, a `{ url, gatewayAuthority }` object, or an array of them for failover. See [endpoints](/sdk/gateway-api#endpoints). |
 | `programId` | `MOLPHA_PROGRAM_ID` | Molpha program. Also bound into gateway request auth. |
 | `idl` | `MOLPHA_IDL` | Anchor IDL. Override only when pinning a different deployment. |
 | `commitment` | Anchor default | Commitment for Solana reads and transactions. |

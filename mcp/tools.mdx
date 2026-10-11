@@ -29,7 +29,7 @@ On a local server with a signer, `submitter` and `payer` default to the server's
 | Input | Meaning |
 | --- | --- |
 | `apiConfig` | The source. See [API config](/concepts/feeds#api-config). |
-| `signaturesRequired` | Quorum. Default `1`; at least `3` in tolerance mode. |
+| `signaturesRequired` | Quorum. Pass at least `3`, the network minimum. The schema default of `1` is rejected by the gateway. |
 | `chains` | Required. One or more of `evm`, `starknet`, `solana`: the chains to build verifier arguments for. |
 | `sourceId` | Optional guard: the round is refused unless `apiConfig` derives to this value. |
 | `maxAge` | Optional freshness window in seconds, used in the verifier arguments. |

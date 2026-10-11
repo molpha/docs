@@ -7,16 +7,16 @@ This page is for Cairo developers who consume Molpha attestations on Starknet. I
 
 The Starknet verifier is a stateless view contract. Given an `Attestation`, it answers one question: did enough selected Molpha nodes sign this exact payload under the stated registry version? It does not store feeds or consumed updates. Your contract owns source and threshold policy, replay protection, and value decoding.
 
-Source: [`molpha/molpha-starknet`](https://github.com/molpha/molpha-starknet) · Cairo / Scarb `2.18+` · snforge `0.61+`. Addresses: [Deployments](/verifiers/deployments).
+Source: [`molpha/starknet-verifier`](https://github.com/molpha/starknet-verifier) · Cairo / Scarb `2.18+` · snforge `0.61+`. Addresses: [Deployments](/verifiers/deployments).
 
 ## Depend on the verifier
 
-Your contract only needs the interface types and the generated dispatcher. Add the repository as a Scarb git dependency; the package is named `verifier`:
+Your contract only needs the interface types and the generated dispatcher. Add the repository as a Scarb git dependency; the package is named `verifier`. Pin the `chivchyn` tag, the release that matches the deployed verifier.
 
 ```toml Scarb.toml
 [dependencies]
 starknet = "2.18.0"
-verifier = { git = "https://github.com/molpha/molpha-starknet.git" }
+verifier = { git = "https://github.com/molpha/starknet-verifier.git", tag = "chivchyn" }
 ```
 
 ```cairo
@@ -27,8 +27,8 @@ use verifier::verify_codes;
 To build and test the contracts locally:
 
 ```bash
-git clone https://github.com/molpha/molpha-starknet.git
-cd molpha-starknet
+git clone --branch chivchyn https://github.com/molpha/starknet-verifier.git
+cd starknet-verifier
 scarb build
 snforge test
 ```

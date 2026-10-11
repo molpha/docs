@@ -51,6 +51,26 @@ No subscription and no sign-in: the payment is the authorization.
   </Step>
   <Step title="Sign, don't send">
     Check the `summary` against your wallet's view of the transaction, then sign it as `payer`. Do **not** broadcast it: the gateway's facilitator co-signs, pays the network fee and submits it.
+
+    In Node, with a devnet keypair and [`@solana/kit`](https://www.npmjs.com/package/@solana/kit):
+
+    ```js
+    import { readFileSync } from "node:fs";
+    import {
+      createKeyPairFromBytes, getBase64Decoder, getBase64Encoder,
+      getTransactionDecoder, getTransactionEncoder, partiallySignTransaction,
+    } from "@solana/kit";
+
+    const secret = Uint8Array.from(JSON.parse(readFileSync(process.env.KEYPAIR_PATH, "utf8")));
+    const keyPair = await createKeyPairFromBytes(secret);
+
+    // unsignedTransaction from prepare_x402_round
+    const transaction = getTransactionDecoder().decode(getBase64Encoder().encode(unsignedTransaction));
+    const signed = await partiallySignTransaction([keyPair], transaction); // signs as payer only
+    const signedTransaction = getBase64Decoder().decode(getTransactionEncoder().encode(signed));
+    ```
+
+    Pass `signedTransaction` to the next step. The same code signs the transaction from `prepare_submit_attestation`.
   </Step>
   <Step title="Execute">
     `execute_x402_round({ challenge, signedTransaction })` runs the round and returns the attestation, verifier arguments and a `paymentReceipt`.
@@ -84,12 +104,12 @@ Subscription rounds are authorized by a sign-in session. Your wallet signs one S
 Before returning a challenge, the server checks it against its own configuration: the gateway domain, the Solana cluster, the gateway PDA and program, and a short expiry. Read it anyway before you sign. It looks like this:
 
 ```text
-dev-gateway.molpha.io wants you to sign in with your Solana account:
+gateway.molpha.io wants you to sign in with your Solana account:
 <your wallet address>
 
 Sign in to Molpha gateway <gateway PDA> as subscriber or delegate. This signature does not move funds.
 
-URI: https://dev-gateway.molpha.io/v1/session
+URI: https://gateway.molpha.io/v1/session
 Version: 1
 Chain ID: EtWTRABZaYq6iMfeYKouRu166VU2xqa1
 Nonce: 5f3a9c0e7b1d4a26c8e0f1a2b3c4d5e6

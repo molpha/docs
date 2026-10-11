@@ -8,6 +8,8 @@ A Solana `Feed` account is only as fresh as its submitter keeps it. This guide s
 
 ## 1. Subscribe
 
+The snippets on this page use `sdk` from [Initialize](/sdk/overview#initialize). Skip this step if the wallet already has a subscription, for example from the [backend quickstart](/quickstarts/backend): a second `subscribe` fails.
+
 ```ts
 import { PlanType } from "@molpha/sdk";
 
@@ -16,14 +18,17 @@ const plan = await sdk.solana.getPlan(PlanType.Basic);
 await sdk.solana.subscribe(PlanType.Basic, {
   maxPriceUsdc: plan.subscriptionPrice,
 });
+```
 
-// Later: renew for another period
+To renew for another 30 days later:
+
+```ts
 await sdk.solana.extendSubscription({
   maxPriceUsdc: plan.subscriptionPrice,
 });
 ```
 
-`maxPriceUsdc` is a safety bound: the transaction aborts if the on-chain price is higher than the user approved.
+Both calls transfer the plan price in USDC. `maxPriceUsdc` is a safety bound: the transaction aborts if the on-chain price is higher than you approved.
 
 ## 2. Derive `sourceId`
 
@@ -33,8 +38,8 @@ Source identity is deterministic. No separate creation transaction is sent.
 import { deriveSourceIdString } from "@molpha/sdk";
 
 const apiConfig = {
-  url: "https://api.example.com/price",
-  responseParser: "$.price",
+  url: "https://api.drand.sh/public/1000", // replace with your API
+  responseParser: "$.round",
 };
 
 const signaturesRequired = 3;

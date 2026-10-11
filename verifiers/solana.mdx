@@ -12,7 +12,7 @@ On Solana you can consume Molpha data three ways:
 | [Submit, then read](#submit-an-attestation) | You hold an attestation and want it on-chain as the feed's new value |
 | [Verify directly](#verify-directly-with-molpha-verifier) | Your program or service needs to check an attestation without writing a feed |
 
-Program ID: `chivcFQgxzwkpLvW41PV431HQ4dYpaW3povQH3AdpQt` on devnet (see [Deployments](/verifiers/deployments)). Accounts, instructions and epoch settlement are documented in [Solana program](/protocol/solana-program).
+Program ID: `MoLF3pgVA9MENSuEujxNNSMaTo71aLyewaH5nrWfUZs` on devnet (see [Deployments](/verifiers/deployments)). Accounts, instructions and epoch settlement are documented in [Solana program](/protocol/solana-program).
 
 ## Read a feed
 
@@ -38,7 +38,7 @@ Pass the `Feed` PDA into your instruction and constrain its seeds, so a caller c
 ```rust
 use anchor_lang::prelude::*;
 
-pub const MOLPHA_PROGRAM_ID: Pubkey = pubkey!("chivcFQgxzwkpLvW41PV431HQ4dYpaW3povQH3AdpQt");
+pub const MOLPHA_PROGRAM_ID: Pubkey = pubkey!("MoLF3pgVA9MENSuEujxNNSMaTo71aLyewaH5nrWfUZs");
 
 #[derive(Accounts)]
 #[instruction(source_id: [u8; 32], signatures_required: u8, submitter: Pubkey)]
@@ -99,7 +99,7 @@ The [`molpha-verifier`](https://crates.io/crates/molpha-verifier) crate is the s
 
 ```toml
 [dependencies]
-molpha-verifier = "0.3.0-dev.15"
+molpha-verifier = "0.3.0"
 # features: "borsh", "anchor" (Attestation as an instruction argument), "solana" (account readers)
 ```
 

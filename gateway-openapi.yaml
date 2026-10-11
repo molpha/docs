@@ -188,7 +188,7 @@ paths:
         content: |
           Runs a round paid by a subscription, for the subscription owner or one of its [delegates](/access-models/delegates), and returns the signed attestation. The response has the same shape as [`POST /v1/x402/execute`](/gateways/api/x402-execute).
 
-          Authenticate with a `RequestAuth` signature in the body or a sign-in session token in the `Authorization` header (sending both returns `400`). Both are described in the [Gateway API overview](/gateways/overview#authentication).
+          Authenticate with a `RequestAuth` signature in the body or a sign-in session token in the `Authorization` header (sending both returns `400`). Both are described in the [Gateway API overview](/gateways/overview#authentication). The request example on this page uses `RequestAuth`. With a session token, send `Authorization: Bearer <token>` and leave `authSig` and `authTimestamp` out of the body.
 
           - **No `sourceId` and no timestamp in the request.** The gateway derives the [source ID](/concepts/feeds#source-id) from `apiConfig` and stamps the round on the 100 ms grid ([round timing](/concepts/attestations#round-timing)).
           - **Duplicates.** A second request from the same consumer for the same source and quorum inside one tick returns `409` with nothing reserved. Retry after one tick with a fresh `authTimestamp`.
@@ -214,9 +214,6 @@ paths:
           On an integrated provider's `api_key` host ([`GET /v1/providers`](/gateways/api/providers-list)), Molpha supplies the credential: use a route the provider lists, method `GET`, no headers, and the aggregation it requires. When the provider's call budget is spent the answer is `503` and no quota is used.
       tags:
         - round
-      security:
-        - {}
-        - BearerAuth: []
       requestBody:
         required: true
         description: Round execution request
@@ -633,7 +630,7 @@ tags:
     x-group: x402 pay-per-request
     description: Pay-per-request path paid in USDC to the protocol treasury (requires a configured facilitator)
 servers:
-  - url: https://dev-gateway.molpha.io
+  - url: https://gateway.molpha.io
     description: Devnet (SDK default)
 components:
   securitySchemes:
@@ -1023,7 +1020,7 @@ components:
         url:
           type: string
           description: Absolute URL of the request.
-          example: https://dev-gateway.molpha.io/v1/x402/execute
+          example: https://gateway.molpha.io/v1/x402/execute
         description:
           type: string
           example: Molpha oracle round

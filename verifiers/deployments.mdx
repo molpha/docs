@@ -9,12 +9,12 @@ Molpha runs on Solana devnet with verifiers on EVM and Starknet testnets. All co
 
 | Chain | Network | Address |
 | --- | --- | --- |
-| Solana | Devnet | `chivcFQgxzwkpLvW41PV431HQ4dYpaW3povQH3AdpQt` |
-| Ethereum | Sepolia | `0xE1fd792b7E54e0C8F0Cd1c8055E446ff36d233eB` |
-| Arbitrum | Sepolia | `0xE1fd792b7E54e0C8F0Cd1c8055E446ff36d233eB` |
-| Avalanche | Fuji | `0xE1fd792b7E54e0C8F0Cd1c8055E446ff36d233eB` |
-| BNB Chain | Testnet | `0xE1fd792b7E54e0C8F0Cd1c8055E446ff36d233eB` |
-| Starknet | Sepolia | `0x0378df4dbecf8f0c7daa801282932f7011c7a5e5773bab9eaf68f5fa5e7530ef` |
+| Solana | Devnet | `MoLF3pgVA9MENSuEujxNNSMaTo71aLyewaH5nrWfUZs` |
+| Ethereum | Sepolia | `0xA6e49A3A1caf3E110cC04765B934C8FF118C2568` |
+| Arbitrum | Sepolia | `0xA6e49A3A1caf3E110cC04765B934C8FF118C2568` |
+| Avalanche | Fuji | `0xA6e49A3A1caf3E110cC04765B934C8FF118C2568` |
+| BNB Chain | Testnet | `0xA6e49A3A1caf3E110cC04765B934C8FF118C2568` |
+| Starknet | Sepolia | `0x032b9f47f12189668b94a5d62fb7d60f968ed0dbaf22090649d1d7a91d79cc38` |
 
 The EVM verifier is deployed with CREATE2, so it has the same address on every EVM network. The SDK exports these addresses, and the MCP `get_capabilities` tool returns them.
 
@@ -22,18 +22,18 @@ The EVM verifier is deployed with CREATE2, so it has the same address on every E
 
 | Service | Endpoint |
 | --- | --- |
-| Gateway (devnet) | `https://dev-gateway.molpha.io` |
+| Gateway (Solana devnet) | `https://gateway.molpha.io` |
 | Hosted MCP server | `https://mcp.molpha.io/mcp` |
 
 ## Packages
 
 | Package | Install |
 | --- | --- |
-| TypeScript SDK | `npm install @molpha/sdk @anchor-lang/core bn.js` ([npm](https://www.npmjs.com/package/@molpha/sdk)) |
+| TypeScript SDK, `0.2.0` | `npm install @molpha/sdk @anchor-lang/core bn.js` ([npm](https://www.npmjs.com/package/@molpha/sdk)) |
 | MCP server | `npx -y @molpha/mcp` ([npm](https://www.npmjs.com/package/@molpha/mcp)) |
-| Rust verifier | `molpha-verifier` ([crates.io](https://crates.io/crates/molpha-verifier)) |
-| EVM verifier | `forge install molpha/evm-verifier` ([GitHub](https://github.com/molpha/evm-verifier)) |
-| Starknet verifier | [GitHub](https://github.com/molpha/molpha-starknet) |
+| Rust verifier, `0.3.0` | `molpha-verifier = "0.3.0"` ([crates.io](https://crates.io/crates/molpha-verifier)) |
+| EVM verifier | `forge install molpha/evm-verifier@chivchyn` ([GitHub](https://github.com/molpha/evm-verifier)) |
+| Starknet verifier | Scarb git dependency, tag `chivchyn` ([GitHub](https://github.com/molpha/starknet-verifier)) |
 
 ## Network status
 

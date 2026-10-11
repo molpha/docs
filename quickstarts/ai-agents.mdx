@@ -33,11 +33,11 @@ Prefer a server that holds its own signer and runs unattended? Use the [local st
   <Step title="Explore without a wallet">
     Read tools work straight away. Try:
 
-    > Use Molpha to show the current capabilities: registry version, node count, chains and verifier addresses. Then derive the sourceId for `https://api.example.com/v1/finalized/price` at `$.price`. Make no writes.
+    > Use Molpha to show the current capabilities: registry version, node count, chains and verifier addresses. Then derive the sourceId for `https://api.drand.sh/public/1000` at `$.round`. Make no writes.
   </Step>
 
   <Step title="Fund a testnet wallet">
-    Paid rounds are signed by **your** wallet, never by the server. Use a dedicated devnet wallet with a little Devnet USDC from [Circle's faucet](https://faucet.circle.com/) (choose **USDC** on **Solana Devnet**).
+    Paid rounds are signed by **your** wallet, never by the server. Use a dedicated devnet wallet (`solana-keygen new --outfile devnet-keypair.json` creates one) with a little Devnet USDC from [Circle's faucet](https://faucet.circle.com/) (choose **USDC** on **Solana Devnet**). `get_x402_status` in the next step shows the exact price and your balance. The wallet needs no SOL for an x402 round: the gateway's facilitator pays the network fee.
   </Step>
 
   <Step title="Run a pay-per-request round">
@@ -45,7 +45,7 @@ Prefer a server that holds its own signer and runs unattended? Use the [local st
 
     > Call `get_x402_status` for 3 signatures with payer `<your wallet address>` and tell me the price. Then run `prepare_x402_round` for the same source with 3 signatures for the EVM chain and give me the transaction to sign.
 
-    Sign the returned USDC transfer with your wallet and **do not broadcast it**. Pass it to `execute_x402_round`: the gateway settles the payment and returns the signed attestation, verifier arguments and a payment receipt.
+    Sign the returned USDC transfer with your wallet and **do not broadcast it**. [Sign, don't send](/mcp/hosted#pay-per-request-x402) has a short Node script for this. A prepared payment is valid for about a minute; if it lapses, prepare again. Pass the signed transaction to `execute_x402_round`: the gateway settles the payment and returns the signed attestation, verifier arguments and a payment receipt.
   </Step>
 
   <Step title="Use the attestation, not the summary">
