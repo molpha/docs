@@ -79,7 +79,7 @@ Describe provider values as attested provider quotes: Molpha attests what the en
 ## On-chain data tools
 
 [Molpha Data](/data/overview) templates are tools too: `list_data_templates` lists them, `read_data` reads any of them
-by id (or a raw source), and each template has a tool of its own:
+by id (or a raw source), each template has a read tool of its own, and `execute_data_round` signs one:
 
 | Tool | Value |
 | --- | --- |
@@ -90,11 +90,12 @@ by id (or a raw source), and each template has a tool of its own:
 | `get_morpho_market`, `get_morpho_health_factor` | Morpho Blue totals, utilization and health |
 | `compare_oracles`, `reconcile_supply`, `get_chain_head`, `get_storage_slot` | Chainlink or Pyth deviation, bridged supply against its lockbox, pinned block, a storage slot |
 
-They are unsigned by default: the Molpha Data service's own read, with the source it read. With `attest: true` the
-source is derived at the service, re-hashed by the MCP server, and run through `execute_subscription_round` (or
-`execute_x402_round` with `payment: "x402"`), so the dry-run lock and spend caps apply. On the hosted server
-`attest: true` returns the derived `source` to run with the session or x402 tools. Settings: `MOLPHA_DATA_URL`
-(default `https://data.molpha.io`) and `MOLPHA_DATA_API_KEY` (optional).
+These read tools are read-only on every server: the Molpha Data service's own unsigned read, with the source it
+read. To sign a template, call `execute_data_round` with the same `template` and `params` (servers with a signer):
+the source is derived at the service, re-hashed by the MCP server, and run through `execute_subscription_round` (or
+`execute_x402_round` with `payment: "x402"`), so the dry-run lock and spend caps apply. On the hosted server, pass a
+read tool's `source` to the session or x402 tools. Settings: `MOLPHA_DATA_URL` (default `https://data.molpha.io`)
+and `MOLPHA_DATA_API_KEY` (optional).
 
 ## Errors
 
