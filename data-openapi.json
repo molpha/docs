@@ -26,14 +26,6 @@
           "type": "string"
         }
       },
-      "Authorization": {
-        "description": "Bearer \u003ctoken\u003e: a session from the gateway's POST /v1/session",
-        "in": "header",
-        "name": "Authorization",
-        "schema": {
-          "type": "string"
-        }
-      },
       "ConsumerAuthority": {
         "description": "RequestAuth: the subscription owner or a delegate (base58)",
         "in": "header",
@@ -1120,6 +1112,13 @@
         },
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "sessionBearer": {
+        "description": "A sign-in session from the Molpha gateway's POST /v1/session, for signed reads paid by the subscription. Optional: unsigned reads need nothing, and signed reads can use RequestAuth headers or an x402 PAYMENT-SIGNATURE instead. Signed batch items need a session.",
+        "scheme": "bearer",
+        "type": "http"
+      }
     }
   },
   "info": {
@@ -1283,9 +1282,6 @@
         "operationId": "read",
         "parameters": [
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -1359,6 +1355,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "One value, unsigned (attest=false) or threshold-signed through the gateway (attest=true)",
         "tags": [
           "Reads"
@@ -1368,11 +1370,6 @@
     "/v1/read/batch": {
       "post": {
         "operationId": "readBatch",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Authorization"
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -1404,6 +1401,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Up to 16 independent reads; signed items need a session (Authorization: Bearer)",
         "tags": [
           "Reads"
@@ -1414,9 +1417,6 @@
       "post": {
         "operationId": "snapshot",
         "parameters": [
-          {
-            "$ref": "#/components/parameters/Authorization"
-          },
           {
             "$ref": "#/components/parameters/PaymentSignature"
           },
@@ -1491,6 +1491,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Up to four fixed-length raw reads on one chain, signed as keccak256 of their concatenation; the payload and its layout come back beside it",
         "tags": [
           "Reads"
@@ -1653,9 +1659,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -1719,6 +1722,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Account balance (account.balance@1)",
         "tags": [
           "Templates"
@@ -1777,9 +1786,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -1843,6 +1849,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Storage slot (evm.storage@1)",
         "tags": [
           "Templates"
@@ -1882,9 +1894,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -1948,6 +1957,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Pinned block (chain.head@1)",
         "tags": [
           "Templates"
@@ -2005,9 +2020,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -2071,6 +2083,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Curve EMA price oracle (curve.priceOracle@1)",
         "tags": [
           "Templates"
@@ -2134,9 +2152,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -2200,6 +2215,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Morpho Blue market totals (lending.morpho.market@1)",
         "tags": [
           "Templates"
@@ -2258,9 +2279,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -2324,6 +2342,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Morpho Blue health factor (position.morpho.health@1)",
         "tags": [
           "Templates"
@@ -2401,9 +2425,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -2467,6 +2488,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Aave v3 reserve rate or index (lending.aave.reserve@1)",
         "tags": [
           "Templates"
@@ -2543,9 +2570,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -2609,6 +2633,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Aave v3 reserve totals (lending.aave.totals@1)",
         "tags": [
           "Templates"
@@ -2671,9 +2701,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -2737,6 +2764,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Aave v3 health factor (position.aave.health@1)",
         "tags": [
           "Templates"
@@ -2799,9 +2832,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -2865,6 +2895,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Aave v3 distance to liquidation (position.aave.liquidationDistance@1)",
         "tags": [
           "Templates"
@@ -2913,9 +2949,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -2979,6 +3012,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Liquid staking token exchange rate (lst.rate@1)",
         "tags": [
           "Templates"
@@ -3055,9 +3094,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -3121,6 +3157,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Two oracle prices compared (oracle.compare@1)",
         "tags": [
           "Templates"
@@ -3169,9 +3211,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -3235,6 +3274,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Pool state snapshot (dex.pool.snapshot@1)",
         "tags": [
           "Templates"
@@ -3296,9 +3341,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -3362,6 +3404,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Pool spot price (dex.pool.price@1)",
         "tags": [
           "Templates"
@@ -3436,9 +3484,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -3502,6 +3547,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Pool reserve (dex.pool.reserves@1)",
         "tags": [
           "Templates"
@@ -3560,9 +3611,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -3626,6 +3674,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Pool TWAP (mean tick) (dex.pool.twap@1)",
         "tags": [
           "Templates"
@@ -3674,9 +3728,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -3740,6 +3791,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Token snapshot (token.snapshot@1)",
         "tags": [
           "Templates"
@@ -3815,9 +3872,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -3881,6 +3935,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Median price across pools (price.median@1)",
         "tags": [
           "Templates"
@@ -3960,9 +4020,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -4026,6 +4083,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Bridged supply against its lockbox (supply.reconcile@1)",
         "tags": [
           "Templates"
@@ -4086,9 +4149,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -4152,6 +4212,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Token total supply (token.supply@1)",
         "tags": [
           "Templates"
@@ -4200,9 +4266,6 @@
             "$ref": "#/components/parameters/VerifierMaxAge"
           },
           {
-            "$ref": "#/components/parameters/Authorization"
-          },
-          {
             "$ref": "#/components/parameters/PaymentSignature"
           },
           {
@@ -4266,6 +4329,12 @@
             "$ref": "#/components/responses/Unavailable"
           }
         },
+        "security": [
+          {},
+          {
+            "sessionBearer": []
+          }
+        ],
         "summary": "Vault share price (erc4626.sharePrice@1)",
         "tags": [
           "Templates"
