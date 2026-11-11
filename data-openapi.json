@@ -1,0 +1,4296 @@
+{
+  "components": {
+    "parameters": {
+      "Attest": {
+        "description": "true: a threshold-signed round through the gateway",
+        "in": "query",
+        "name": "attest",
+        "schema": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "AuthSig": {
+        "description": "RequestAuth: Ed25519 signature (base58 or 0x hex) over keccak256(\"MOLPHA_REQAUTH_V1\" || programId || gatewayPda || sourceId || u8 signatures || u64le authTimestamp)",
+        "in": "header",
+        "name": "X-Molpha-Auth-Sig",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "AuthTimestamp": {
+        "description": "RequestAuth: unix seconds at signing, within the gateway's window (60 s by default)",
+        "in": "header",
+        "name": "X-Molpha-Auth-Timestamp",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "Authorization": {
+        "description": "Bearer \u003ctoken\u003e: a session from the gateway's POST /v1/session",
+        "in": "header",
+        "name": "Authorization",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "ConsumerAuthority": {
+        "description": "RequestAuth: the subscription owner or a delegate (base58)",
+        "in": "header",
+        "name": "X-Molpha-Consumer-Authority",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "PaymentSignature": {
+        "description": "x402 v2 payment for the gateway's /v1/x402/execute (base64)",
+        "in": "header",
+        "name": "PAYMENT-SIGNATURE",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "Signatures": {
+        "description": "signaturesRequired of a signed read",
+        "in": "query",
+        "name": "signatures",
+        "schema": {
+          "default": 3,
+          "maximum": 255,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "SubscriptionOwner": {
+        "description": "RequestAuth: the subscription owner, when a delegate signs (defaults to the authority)",
+        "in": "header",
+        "name": "X-Molpha-Subscription-Owner",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "VerifierMaxAge": {
+        "description": "seconds written into the EVM and Starknet verify calldata; 0 turns the freshness check off",
+        "in": "query",
+        "name": "verifierMaxAge",
+        "schema": {
+          "default": 300,
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    },
+    "responses": {
+      "BadGateway": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "The gateway failed or signed something else (GATEWAY_ERROR, BAD_ATTESTATION)"
+      },
+      "BadRequest": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Malformed request (BAD_REQUEST)"
+      },
+      "Conflict": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Still a same-tick duplicate after one retry (DUPLICATE_ROUND)"
+      },
+      "FailedDependency": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "The source's own assertion or arithmetic refused the data (ASSERTION_FAILED, EVALUATION_FAILED)"
+      },
+      "Forbidden": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Subscription inactive, delegate not allowed, or quota spent (SUBSCRIPTION_REFUSED)"
+      },
+      "NotFound": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Unknown template (NOT_FOUND)"
+      },
+      "NotImplemented": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Signed reads are not configured on this service (SIGNED_READ_UNAVAILABLE)"
+      },
+      "PaymentRequired": {
+        "description": "x402: the gateway's own 402 body and PAYMENT-REQUIRED header, unchanged",
+        "headers": {
+          "PAYMENT-REQUIRED": {
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "TooManyRequests": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Rate limited (RATE_LIMITED); see Retry-After"
+      },
+      "Unauthorized": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Unknown X-API-Key, or the gateway refused the session or RequestAuth (UNAUTHORIZED)"
+      },
+      "Unavailable": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "RPC unavailable, busy, or the round failed (RPC_UNAVAILABLE, BUSY, ROUND_FAILED with likelyDiverged); see Retry-After"
+      },
+      "Unprocessable": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "A parameter or raw source is refused, or the chain's answer does not fit the source (PARAM_INVALID, SOURCE_INVALID, READ_FAILED)"
+      }
+    },
+    "schemas": {
+      "Attestation": {
+        "properties": {
+          "registryVersion": {
+            "type": "integer"
+          },
+          "signaturesRequired": {
+            "type": "integer"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "timestamp": {
+            "description": "unix milliseconds",
+            "type": "integer"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "BatchRequest": {
+        "properties": {
+          "attest": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReadRequest"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          },
+          "signatures": {
+            "type": "integer"
+          },
+          "verifierMaxAge": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "BatchResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "properties": {
+                "envelope": {
+                  "$ref": "#/components/schemas/Envelope"
+                },
+                "error": {
+                  "type": "object"
+                },
+                "index": {
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "ChainList": {
+        "properties": {
+          "chains": {
+            "items": {
+              "properties": {
+                "alias": {
+                  "type": "string"
+                },
+                "blockTimeMs": {
+                  "type": "integer"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "maxLagMs": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "profiles": {
+                  "additionalProperties": {
+                    "$ref": "#/components/schemas/Finality"
+                  },
+                  "type": "object"
+                },
+                "served": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "defaultProfile": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "Derived": {
+        "properties": {
+          "canonical": {
+            "type": "string"
+          },
+          "chain": {
+            "type": "string"
+          },
+          "facts": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "source": {
+            "type": "object"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "template": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "canonical",
+          "source",
+          "sourceId"
+        ],
+        "type": "object"
+      },
+      "Envelope": {
+        "properties": {
+          "attestation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Attestation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "data": {
+            "properties": {
+              "decimals": {
+                "oneOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "encoded": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "facts": {
+            "oneOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fields": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "decoded from payload by the service; recomputed, not signed",
+            "type": "object"
+          },
+          "layout": {
+            "description": "how the payload splits: template fields, or a /snapshot's segments"
+          },
+          "mode": {
+            "enum": [
+              "exact",
+              "tolerance"
+            ],
+            "type": "string"
+          },
+          "params": {
+            "oneOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "payload": {
+            "oneOf": [
+              {
+                "description": "a keccak256 output's preimage, hex",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paymentReceipt": {
+            "oneOf": [
+              {
+                "description": "the gateway's x402 PAYMENT-RESPONSE",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "read": {
+            "properties": {
+              "blocks": {
+                "oneOf": [
+                  {
+                    "additionalProperties": {
+                      "type": "integer"
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "cached": {
+                "type": "boolean"
+              },
+              "chain": {
+                "type": "string"
+              },
+              "finality": {
+                "type": "string"
+              },
+              "inputs": {
+                "oneOf": [
+                  {
+                    "items": {
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "observedAt": {
+                "type": "string"
+              },
+              "timestampMs": {
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "round": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Round"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "signature": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Signature"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "signed": {
+            "type": "boolean"
+          },
+          "source": {
+            "properties": {
+              "config": {
+                "description": "the canonical source document; keccak256 of its canonical bytes is sourceId",
+                "type": "object"
+              },
+              "sourceId": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "template": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verifierArgs": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/VerifierArgs"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "data",
+          "mode",
+          "read",
+          "signed",
+          "source"
+        ],
+        "type": "object"
+      },
+      "Error": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "input": {
+                "type": "string"
+              },
+              "likelyDiverged": {
+                "type": "boolean"
+              },
+              "message": {
+                "type": "string"
+              },
+              "stage": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "Finality": {
+        "properties": {
+          "commitment": {
+            "type": "string"
+          },
+          "lagMs": {
+            "type": "integer"
+          },
+          "maxAgeMs": {
+            "type": "integer"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "n": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "Param": {
+        "properties": {
+          "default": {
+            "type": "string"
+          },
+          "doc": {
+            "type": "string"
+          },
+          "enum": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "name": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "type": {
+            "enum": [
+              "chain",
+              "finality",
+              "address",
+              "uint",
+              "enum",
+              "addressList",
+              "bytes32",
+              "text"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ],
+        "type": "object"
+      },
+      "PayloadField": {
+        "properties": {
+          "decimals": {
+            "type": "integer"
+          },
+          "length": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ReadRequest": {
+        "description": "A template with parameters, or a raw source document, not both",
+        "properties": {
+          "attest": {
+            "default": false,
+            "type": "boolean"
+          },
+          "params": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "signatures": {
+            "default": 3,
+            "maximum": 255,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "source": {
+            "description": "a source document (molpha-node-client docs/source-format.md)",
+            "type": "object"
+          },
+          "template": {
+            "description": "id, optionally @version",
+            "type": "string"
+          },
+          "verifierMaxAge": {
+            "default": 300,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "Round": {
+        "properties": {
+          "attempts": {
+            "type": "integer"
+          },
+          "check": {
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "signature": {
+                "enum": [
+                  "valid",
+                  "invalid",
+                  "unchecked"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "fresh": {
+            "type": "boolean"
+          },
+          "gateway": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "enum": [
+              "session",
+              "requestAuth",
+              "x402"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "Signature": {
+        "properties": {
+          "commitment": {
+            "type": "string"
+          },
+          "signature": {
+            "type": "string"
+          },
+          "signersBitmap": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "SnapshotRead": {
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "args": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "calldata": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "contract": {
+            "type": "string"
+          },
+          "data": {
+            "type": "string"
+          },
+          "felts": {
+            "type": "integer"
+          },
+          "length": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "selector": {
+            "type": "string"
+          },
+          "sig": {
+            "type": "string"
+          },
+          "slot": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "call",
+              "storage",
+              "account"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "SnapshotRequest": {
+        "properties": {
+          "attest": {
+            "type": "boolean"
+          },
+          "chain": {
+            "type": "string"
+          },
+          "finality": {
+            "type": "string"
+          },
+          "reads": {
+            "items": {
+              "$ref": "#/components/schemas/SnapshotRead"
+            },
+            "maxItems": 4,
+            "minItems": 1,
+            "type": "array"
+          },
+          "signatures": {
+            "type": "integer"
+          },
+          "verifierMaxAge": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "chain",
+          "reads"
+        ],
+        "type": "object"
+      },
+      "Template": {
+        "properties": {
+          "caveats": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "chains": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "class": {
+            "type": "string"
+          },
+          "example": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kinds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "params": {
+            "items": {
+              "$ref": "#/components/schemas/Param"
+            },
+            "type": "array"
+          },
+          "path": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "returns": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "params",
+          "ref",
+          "version"
+        ],
+        "type": "object"
+      },
+      "VerifierArgs": {
+        "properties": {
+          "evm": {
+            "properties": {
+              "calldata": {
+                "type": "string"
+              },
+              "function": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "maxAge": {
+            "type": "integer"
+          },
+          "solana": {
+            "properties": {
+              "coalitionKey": {
+                "oneOf": [
+                  {
+                    "properties": {
+                      "x": {
+                        "type": "string"
+                      },
+                      "y": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "data": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "instruction": {
+                "type": "string"
+              },
+              "note": {
+                "type": "string"
+              },
+              "programId": {
+                "type": "string"
+              },
+              "rawValue": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "starknet": {
+            "properties": {
+              "calldata": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "entrypoint": {
+                "type": "string"
+              },
+              "selector": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "VerifyRequest": {
+        "properties": {
+          "attestation": {
+            "$ref": "#/components/schemas/Attestation"
+          },
+          "maxAge": {
+            "default": 0,
+            "type": "integer"
+          },
+          "payload": {
+            "type": "string"
+          },
+          "signature": {
+            "$ref": "#/components/schemas/Signature"
+          }
+        },
+        "required": [
+          "attestation",
+          "signature"
+        ],
+        "type": "object"
+      },
+      "VerifyResponse": {
+        "properties": {
+          "chains": {
+            "items": {
+              "properties": {
+                "chain": {
+                  "type": "string"
+                },
+                "code": {
+                  "oneOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "elapsedMs": {
+                  "type": "number"
+                },
+                "error": {
+                  "type": "string"
+                },
+                "maxAge": {
+                  "type": "integer"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "success": {
+                  "oneOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "verifier": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "local": {
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "signature": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "payloadMatches": {
+            "type": "boolean"
+          },
+          "registryVersion": {
+            "type": "integer"
+          },
+          "roundId": {
+            "type": "string"
+          },
+          "signaturesRequired": {
+            "type": "integer"
+          },
+          "signerCount": {
+            "type": "integer"
+          },
+          "valid": {
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "On-chain data as Molpha sources: a curated catalog of templates, unsigned reads, and threshold-signed reads through the Molpha gateway. Signed reads run on testnet nodes that read mainnet chains.",
+    "title": "Molpha Data API",
+    "version": "1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Served chains"
+          }
+        },
+        "summary": "Per-chain endpoint status",
+        "tags": [
+          "Discovery"
+        ]
+      }
+    },
+    "/v1/catalog": {
+      "get": {
+        "operationId": "listTemplates",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias",
+            "in": "query",
+            "name": "chain",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "substring of the template's class",
+            "in": "query",
+            "name": "class",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "templates": {
+                      "items": {
+                        "$ref": "#/components/schemas/Template"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Templates"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          }
+        },
+        "summary": "Templates, filtered by chain or class",
+        "tags": [
+          "Discovery"
+        ]
+      }
+    },
+    "/v1/catalog/{templateId}": {
+      "get": {
+        "operationId": "getTemplate",
+        "parameters": [
+          {
+            "description": "with or without @version",
+            "in": "path",
+            "name": "templateId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Template"
+                }
+              }
+            },
+            "description": "Template"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "summary": "One template: parameters, returns, caveats, shortcut path",
+        "tags": [
+          "Discovery"
+        ]
+      }
+    },
+    "/v1/chains": {
+      "get": {
+        "operationId": "listChains",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChainList"
+                }
+              }
+            },
+            "description": "Chains"
+          }
+        },
+        "summary": "Served chains and what the final and fast profiles resolve to",
+        "tags": [
+          "Discovery"
+        ]
+      }
+    },
+    "/v1/openapi.json": {
+      "get": {
+        "operationId": "openapi",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OpenAPI 3.1"
+          }
+        },
+        "summary": "This document",
+        "tags": [
+          "Discovery"
+        ]
+      }
+    },
+    "/v1/read": {
+      "post": {
+        "description": "attest=true sends the source to the gateway for a round. The service holds no subscription and no funds: send a gateway session (Authorization: Bearer), RequestAuth headers (sign the derived sourceId), or an x402 PAYMENT-SIGNATURE. With none, the gateway's 402 and its PAYMENT-REQUIRED header come back unchanged. A same-tick 409 and a stale registry version are retried once; nothing else is, because a retry is a new round.",
+        "operationId": "read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "The value and its source, read context and, when signed, attestation"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "One value, unsigned (attest=false) or threshold-signed through the gateway (attest=true)",
+        "tags": [
+          "Reads"
+        ]
+      }
+    },
+    "/v1/read/batch": {
+      "post": {
+        "operationId": "readBatch",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Authorization"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchResponse"
+                }
+              }
+            },
+            "description": "One result per item, in order"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Up to 16 independent reads; signed items need a session (Authorization: Bearer)",
+        "tags": [
+          "Reads"
+        ]
+      }
+    },
+    "/v1/snapshot": {
+      "post": {
+        "operationId": "snapshot",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnapshotRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope with payload and layout"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Up to four fixed-length raw reads on one chain, signed as keccak256 of their concatenation; the payload and its layout come back beside it",
+        "tags": [
+          "Reads"
+        ]
+      }
+    },
+    "/v1/sources/derive": {
+      "post": {
+        "operationId": "deriveSource",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Derived"
+                }
+              }
+            },
+            "description": "Derived source"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Template and parameters, or a raw source, to the canonical source and its sourceId; nothing is read",
+        "tags": [
+          "Reads"
+        ]
+      }
+    },
+    "/v1/verify": {
+      "post": {
+        "operationId": "verify",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyResponse"
+                }
+              }
+            },
+            "description": "What each check said"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "summary": "Check an attestation: locally against the gateway's registry keys, and with verify on the configured verifier contracts",
+        "tags": [
+          "Verification"
+        ]
+      }
+    },
+    "/v1/{chain}/accounts/{account}/balance": {
+      "get": {
+        "description": "A wallet's native balance (EVM) or token balance (ERC-20, Starknet token, or the wallet's associated SPL token account).\n\nReturns: the balance in whole tokens at the token's decimals (18 for native EVM balances); uint256, int256 in tolerance mode\n\n- Solana reads the wallet's associated token account only; tokens held in other token accounts are not counted, and a wallet without one fails the read.\n- The Solana native balance (lamports) needs a source-format leaf that does not exist yet (Phase 2).",
+        "operationId": "accountBalance",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM, Starknet, Solana chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the wallet",
+            "in": "path",
+            "name": "account",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the token (ERC-20, Starknet token, SPL mint); omit for the native balance on EVM chains",
+            "in": "query",
+            "name": "token",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Solana: the program that owns the mint, which decides the associated token account",
+            "in": "query",
+            "name": "tokenProgram",
+            "schema": {
+              "default": "spl",
+              "enum": [
+                "spl",
+                "token2022"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "tolerance for a Solana account that changes between the nodes' reads",
+            "in": "query",
+            "name": "mode",
+            "schema": {
+              "default": "exact",
+              "enum": [
+                "exact",
+                "tolerance"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Account balance (account.balance@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    },
+    "/v1/{chain}/accounts/{address}/storage/{slot}": {
+      "get": {
+        "description": "The 32 bytes of one storage slot of a contract at the pinned block.\n\nReturns: the slot's 32 bytes (bytes32), as stored; packed fields and mapping slots are the caller's to decode or compute",
+        "operationId": "evmStorage",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the contract",
+            "in": "path",
+            "name": "address",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the storage slot, 0x and 64 hex digits",
+            "in": "path",
+            "name": "slot",
+            "required": true,
+            "schema": {
+              "pattern": "^0x[0-9a-fA-F]{64}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Storage slot (evm.storage@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    },
+    "/v1/{chain}/blocks/head": {
+      "get": {
+        "description": "The block (EVM, Starknet) or slot (Solana) a source of this chain and finality reads at, from the source format's $block.\n\nReturns: the block number or slot (uint256; int256 on Solana, 0 decimals)\n\n- EVM and Starknet: the newest block that satisfies the finality at the round timestamp; its time is about the round timestamp minus the finality's lag. The source format has no block-time leaf.\n- Solana: the slot of the node's read, signed as the median of the nodes' slots (tolerance mode).",
+        "operationId": "chainHead",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM, Starknet, Solana chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Pinned block (chain.head@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    },
+    "/v1/{chain}/curve/{pool}/price-oracle": {
+      "get": {
+        "description": "A Curve pool's exponential moving average price (price_oracle) of coin i+1 in coin 0.\n\nReturns: coin 0 units per one priced coin, 18 decimals (uint256); Curve scales it to 18 decimals whatever the coins' decimals\n\n- An EMA lags the spot price by design; its half-life is the pool's ma_exp_time.\n- For ETH pools coin 0 can be the native-ETH placeholder 0xeeee…eeee.",
+        "operationId": "curvePriceOracle",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "a Curve pool with price_oracle (stableswap-ng, crypto, tricrypto)",
+            "in": "path",
+            "name": "pool",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "description": "for pools whose price_oracle takes an index (stableswap-ng, tricrypto): the coin priced is coins(index+1); omit for two-coin crypto pools",
+            "in": "query",
+            "name": "index",
+            "schema": {
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Curve EMA price oracle (curve.priceOracle@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    },
+    "/v1/{chain}/lending/morpho/markets/{id}": {
+      "get": {
+        "description": "A Morpho Blue market's total supplied or borrowed assets, or its utilization, from market(id).\n\nReturns: supplied and borrowed: whole loan tokens; utilization: a fraction, 18 decimals (uint256)\n\n- Totals are as of the market's last interaction (lastUpdate): interest accrued since is not included.",
+        "operationId": "lendingMorphoMarket",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the market id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^0x[0-9a-fA-F]{64}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "description": "supplied and borrowed in whole loan tokens; utilization = borrowed / supplied",
+            "in": "query",
+            "name": "field",
+            "schema": {
+              "default": "utilization",
+              "enum": [
+                "supplied",
+                "borrowed",
+                "utilization"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Morpho Blue market totals (lending.morpho.market@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    },
+    "/v1/{chain}/lending/morpho/markets/{id}/positions/{user}": {
+      "get": {
+        "description": "A borrower's health on a Morpho Blue market, computed as Morpho computes it: collateral at the market's oracle price times LLTV, over the borrow assets of the borrower's shares.\n\nReturns: maximum borrow over borrowed, 18 decimals (uint256): below 1 the position can be liquidated; 10^18 means no debt\n\n- Three reads at one block: the position, the market (to turn borrow shares into assets, rounded up as Morpho does) and the oracle price.\n- Borrow assets are as of the market's last interaction; interest accrued since is not included, so the health is slightly optimistic on an idle market.",
+        "operationId": "positionMorphoHealth",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the market id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^0x[0-9a-fA-F]{64}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the borrower",
+            "in": "path",
+            "name": "user",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Morpho Blue health factor (position.morpho.health@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    },
+    "/v1/{chain}/lending/{market}/markets/{asset}": {
+      "get": {
+        "description": "One of an Aave v3 (or Spark) reserve's current rates or indexes, from Pool.getReserveData.\n\nReturns: a fraction with 27 decimals (uint256): 0.05 is a 5% yearly rate; an index is the accrued growth factor\n\n- Rates are stored at the reserve's last interaction and are yearly rates, not APY.\n- A token that is not a reserve of the market fails the source's assertion (liquidity index above zero) instead of signing zero.",
+        "operationId": "lendingAaveReserve",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the lending market",
+            "in": "path",
+            "name": "market",
+            "required": true,
+            "schema": {
+              "default": "aave-v3",
+              "enum": [
+                "aave-v3",
+                "spark"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "the reserve's underlying token",
+            "in": "path",
+            "name": "asset",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "description": "supplyRate and variableBorrowRate are yearly rates (APR, not compounded); the indexes grow from 1",
+            "in": "query",
+            "name": "field",
+            "schema": {
+              "default": "supplyRate",
+              "enum": [
+                "liquidityIndex",
+                "supplyRate",
+                "variableBorrowIndex",
+                "variableBorrowRate"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Aave v3 reserve rate or index (lending.aave.reserve@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    },
+    "/v1/{chain}/lending/{market}/markets/{asset}/totals": {
+      "get": {
+        "description": "An Aave v3 (or Spark) reserve's total supplied (aToken supply) or borrowed (variable debt token supply), or its utilization.\n\nReturns: supplied and borrowed: whole tokens at the asset's decimals; utilization: a fraction, 18 decimals (uint256)\n\n- The aToken and debt token addresses are read when the source is derived and written into it; a reserve that is ever re-deployed gets a new sourceId.\n- Borrowed counts variable debt only; stable debt is deprecated in Aave v3.2 and later.",
+        "operationId": "lendingAaveTotals",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the lending market",
+            "in": "path",
+            "name": "market",
+            "required": true,
+            "schema": {
+              "default": "aave-v3",
+              "enum": [
+                "aave-v3",
+                "spark"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "the reserve's underlying token",
+            "in": "path",
+            "name": "asset",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "description": "supplied and borrowed in whole tokens; utilization = borrowed / supplied",
+            "in": "query",
+            "name": "field",
+            "schema": {
+              "default": "utilization",
+              "enum": [
+                "supplied",
+                "borrowed",
+                "utilization"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Aave v3 reserve totals (lending.aave.totals@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    },
+    "/v1/{chain}/lending/{market}/positions/{user}": {
+      "get": {
+        "description": "An account's health factor on an Aave v3 (or Spark) market, from Pool.getUserAccountData.\n\nReturns: the health factor, 18 decimals (uint256); below 1 the position can be liquidated; 10^18 means no debt\n\n- An account without debt reads 1000000000000000000 (10^18), not Aave's type(uint256).max.",
+        "operationId": "positionAaveHealth",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the lending market",
+            "in": "path",
+            "name": "market",
+            "required": true,
+            "schema": {
+              "default": "aave-v3",
+              "enum": [
+                "aave-v3",
+                "spark"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "the account",
+            "in": "path",
+            "name": "user",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Aave v3 health factor (position.aave.health@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    },
+    "/v1/{chain}/lending/{market}/positions/{user}/liquidation": {
+      "get": {
+        "description": "How far an account's collateral value can fall, debt unchanged, before the position can be liquidated: 1 - 1/healthFactor.\n\nReturns: a fraction, 18 decimals (int256): 0.25 means a 25% fall in all collateral; 0 or below means liquidatable now; 1 means no debt\n\n- All collateral is assumed to fall together and debt to stay put; a position with several assets can reach liquidation sooner through one of them.\n- An account with debt and no collateral reads 0.",
+        "operationId": "positionAaveLiquidationDistance",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the lending market",
+            "in": "path",
+            "name": "market",
+            "required": true,
+            "schema": {
+              "default": "aave-v3",
+              "enum": [
+                "aave-v3",
+                "spark"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "the account",
+            "in": "path",
+            "name": "user",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Aave v3 distance to liquidation (position.aave.liquidationDistance@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    },
+    "/v1/{chain}/lst/{token}/rate": {
+      "get": {
+        "description": "How much of the base asset one liquid staking token is worth, read from the token's own contract or stake pool.\n\nReturns: base-asset units per one token, 18 decimals (uint256)\n\n- Only the tokens listed in the catalog are supported; the reader differs per token.\n- A Solana stake pool updates once per epoch, so its rate is constant between updates.",
+        "operationId": "lstRate",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM, Solana chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the liquid staking token: its contract on EVM, its mint on Solana",
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Liquid staking token exchange rate (lst.rate@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    },
+    "/v1/{chain}/oracles/compare": {
+      "get": {
+        "description": "The deviation between two price feeds on one chain (Chainlink aggregators or Pyth price feeds), refusing a feed older than maxAge; or whether they agree within a bound.\n\nReturns: the deviation |a - b| / min(a, b) in basis points, 2 decimals (uint256); with maxDeviationBps, true when within it (bool)\n\n- Both feeds must price the same pair in the same quote; the service shows Chainlink's description, but cannot read what a Pyth id names on chain.\n- Pyth prices on EVM are pull-based: a feed nobody updated is refused by maxAge rather than compared.",
+        "operationId": "oracleCompare",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"chainlink:\u003caggregator or proxy\u003e\" or \"pyth:\u003cprice feed id\u003e\"",
+            "in": "query",
+            "name": "a",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the second feed, in the same form",
+            "in": "query",
+            "name": "b",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "seconds; a feed updated longer ago than this before the round fails it",
+            "in": "query",
+            "name": "maxAge",
+            "schema": {
+              "default": "86400",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "set it to sign a yes/no answer (deviation within the bound) instead of the deviation",
+            "in": "query",
+            "name": "maxDeviationBps",
+            "schema": {
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Two oracle prices compared (oracle.compare@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    },
+    "/v1/{chain}/pools/{pool}": {
+      "get": {
+        "description": "A concentrated-liquidity pool's state under one signature: square-root price, tick, active liquidity and fee (Uniswap v3 family), or the Whirlpool account up to its fee growth.\n\nReturns: keccak256 of the raw payload (bytes32); the payload and its layout come with the response and are decoded into fields\n\n- Exact mode: a pool traded between the nodes' reads fails the round. Whirlpools are written nearly every slot, so the Solana form is best effort; use dex.pool.price (tolerance) for a price.",
+        "operationId": "dexPoolSnapshot",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM, Solana chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "a Uniswap v3-style pool or an Orca Whirlpool",
+            "in": "path",
+            "name": "pool",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Pool state snapshot (dex.pool.snapshot@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    },
+    "/v1/{chain}/pools/{pool}/price": {
+      "get": {
+        "description": "A concentrated-liquidity pool's current price from its square-root price, adjusted for both tokens' decimals.\n\nReturns: quote-token units per one base token, 18 decimals; the base is token0 (token A) unless inverted\n\n- A spot price moves within a block and can be pushed by a single trade; use dex.pool.twap or a liquidity floor for settlement.\n- The price names its quote token. There is no USD conversion.\n- Solana pools are written every slot, so the Solana form runs in tolerance mode (median of node reads).\n- Prices below 1e-18 of the quote token round to zero; use invert.",
+        "operationId": "dexPoolPrice",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM, Solana chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "a Uniswap v3-style pool (Uniswap, PancakeSwap, Sushi v3, Aerodrome Slipstream) or an Orca Whirlpool",
+            "in": "path",
+            "name": "pool",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "description": "false: token1 per token0 (token B per token A); true: the inverse",
+            "in": "query",
+            "name": "invert",
+            "schema": {
+              "default": "false",
+              "enum": [
+                "false",
+                "true"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Pool spot price (dex.pool.price@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    },
+    "/v1/{chain}/pools/{pool}/reserves": {
+      "get": {
+        "description": "One side of a pool's reserves: getReserves of a Uniswap v2-style pair, the token balance of a v3-style pool, or a Whirlpool's token vault.\n\nReturns: the reserve in whole tokens of that side (uint256; int256 on Solana, tolerance mode)\n\n- v3 and Whirlpool reserves are token balances: they include fees not yet collected and, for v3, tokens sent to the pool by mistake. They are not the liquidity at the current price.\n- v2 reserves are as of the pair's last sync.",
+        "operationId": "dexPoolReserves",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM, Solana chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "a v2 pair, a v3-style pool, or an Orca Whirlpool",
+            "in": "path",
+            "name": "pool",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "description": "token0 (A) or token1 (B)",
+            "in": "query",
+            "name": "side",
+            "schema": {
+              "default": "0",
+              "enum": [
+                "0",
+                "1"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "EVM: the pool's interface",
+            "in": "query",
+            "name": "kind",
+            "schema": {
+              "default": "v3",
+              "enum": [
+                "v2",
+                "v3"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Pool reserve (dex.pool.reserves@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    },
+    "/v1/{chain}/pools/{pool}/twap": {
+      "get": {
+        "description": "The arithmetic mean tick over a window, from the pool's own oracle (observe), rounded as Uniswap's OracleLibrary rounds.\n\nReturns: the mean tick over the window ending at the pinned block (int256, 0 decimals); price = 1.0001^tick, adjusted for decimals\n\n- The pool must hold observations as old as the window, or every read fails.\n- The signed value is the tick; converting it to a price needs a power the source format does not have yet (Phase 2). The response shows the price computed from the signed tick.",
+        "operationId": "dexPoolTwap",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "a Uniswap v3-style pool with an observation buffer",
+            "in": "path",
+            "name": "pool",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "description": "seconds, 1 to 86400",
+            "in": "query",
+            "name": "window",
+            "schema": {
+              "default": "1800",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Pool TWAP (mean tick) (dex.pool.twap@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    },
+    "/v1/{chain}/tokens/{token}": {
+      "get": {
+        "description": "A token's supply and decimals (EVM, Starknet) or its whole SPL mint (supply, decimals, mint and freeze authorities) under one signature.\n\nReturns: keccak256 of the raw payload (bytes32); the payload and its layout come with the response and are decoded into fields\n\n- Exact mode: a mint whose supply moves between the nodes' reads fails the round (best effort for busy Solana mints).\n- EVM tokens have no standard owner or pause flag; those need a storage slot or a template for the token's own interface.",
+        "operationId": "tokenSnapshot",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM, Starknet, Solana chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the token: ERC-20 contract, Starknet contract, or SPL mint",
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Token snapshot (token.snapshot@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    },
+    "/v1/{chain}/tokens/{token}/price": {
+      "get": {
+        "description": "The median price of a token in a quote token across two to four concentrated-liquidity pools of that pair, optionally refusing pools below a liquidity floor.\n\nReturns: quote-token units per one token, 18 decimals (uint256; int256 on Solana, tolerance mode)\n\n- The median is taken over the pools' square-root prices, then squared: for an even count it is the square of the mean of the two middle square roots, a hair below the mean of the two middle prices.\n- A pool below the floor fails the whole round; nothing is signed without it.\n- No USD: the price names its quote token.",
+        "operationId": "priceMedian",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM, Solana chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the token priced (base)",
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the token it is priced in",
+            "in": "query",
+            "name": "quote",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "2 to 4 Uniswap v3-style pools, or Solana Orca Whirlpool and Raydium CLMM pools (mixed), of exactly this pair",
+            "in": "query",
+            "name": "pools",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "every pool's active liquidity (raw units) must be at least this, or the round fails; on EVM at most 2 pools then (liquidity is a second read)",
+            "in": "query",
+            "name": "minLiquidity",
+            "schema": {
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Median price across pools (price.median@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    },
+    "/v1/{chain}/tokens/{token}/reconcile": {
+      "get": {
+        "description": "A canonical token's balance locked in a bridge, less the total supply of its bridged copies on up to three other chains.\n\nReturns: delta in whole tokens at the largest of the legs' decimals (int256), or ok (bool); a negative delta means more bridged supply than locked\n\n- Each leg is read at its own chain's finality, so the legs are not one instant: tokens in flight between chains show as a delta.\n- A Solana leg reads a mint that moves between slots; a source with one runs in tolerance mode and can only sign the delta.",
+        "operationId": "supplyReconcile",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the canonical token on this chain",
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the bridge contract that holds the locked tokens",
+            "in": "query",
+            "name": "lockbox",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the bridged copies, \"chain:token\" comma-separated, 1 to 3 (EVM, Starknet or Solana chains this service serves)",
+            "in": "query",
+            "name": "remote",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "delta = locked - bridged supply; ok = delta \u003e= 0",
+            "in": "query",
+            "name": "result",
+            "schema": {
+              "default": "delta",
+              "enum": [
+                "delta",
+                "ok"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Bridged supply against its lockbox (supply.reconcile@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    },
+    "/v1/{chain}/tokens/{token}/supply": {
+      "get": {
+        "description": "The total supply of a token, in whole tokens, read from the token contract or the SPL mint.\n\nReturns: total supply in whole tokens, at the token's own decimals (uint256; int256 in tolerance mode)\n\n- The token's decimals are read once when the source is derived and written into it.\n- On Solana nodes read a few slots apart; a mint that is minted or burned often needs tolerance mode.",
+        "operationId": "tokenSupply",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM, Starknet, Solana chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the token: ERC-20 contract, Starknet contract, or SPL mint",
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "description": "exact (default on EVM and Starknet) or tolerance (default on Solana, where supply moves between slots)",
+            "in": "query",
+            "name": "mode",
+            "schema": {
+              "enum": [
+                "exact",
+                "tolerance"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Token total supply (token.supply@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    },
+    "/v1/{chain}/vaults/{vault}/share-price": {
+      "get": {
+        "description": "Assets per vault share, from the vault's own convertToAssets.\n\nReturns: asset units per one share, 18 decimals (uint256)\n\n- convertToAssets is the vault's own accounting; it does not reflect withdrawal limits or fees.\n- The share and asset decimals and the asset address are read once when the source is derived.",
+        "operationId": "erc4626SharePrice",
+        "parameters": [
+          {
+            "description": "CAIP-2 id or alias (EVM, Starknet chains)",
+            "in": "path",
+            "name": "chain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the ERC-4626 vault (EVM) or SNIP-22 / OpenZeppelin ERC4626 vault (Starknet)",
+            "in": "path",
+            "name": "vault",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "\"final\" or \"fast\", or a raw mode: \"finalized\", \"safe\", \"confirmations:\u003cn\u003e\" (EVM, Starknet), \"confirmed\" (Solana)",
+            "in": "query",
+            "name": "finality",
+            "schema": {
+              "default": "final",
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Attest"
+          },
+          {
+            "$ref": "#/components/parameters/Signatures"
+          },
+          {
+            "$ref": "#/components/parameters/VerifierMaxAge"
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          },
+          {
+            "$ref": "#/components/parameters/PaymentSignature"
+          },
+          {
+            "$ref": "#/components/parameters/ConsumerAuthority"
+          },
+          {
+            "$ref": "#/components/parameters/SubscriptionOwner"
+          },
+          {
+            "$ref": "#/components/parameters/AuthSig"
+          },
+          {
+            "$ref": "#/components/parameters/AuthTimestamp"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            },
+            "description": "Envelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "424": {
+            "$ref": "#/components/responses/FailedDependency"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "summary": "Vault share price (erc4626.sharePrice@1)",
+        "tags": [
+          "Templates"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://data.molpha.io"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Discovery"
+    },
+    {
+      "name": "Reads"
+    },
+    {
+      "description": "Typed shortcuts: one template each",
+      "name": "Templates"
+    },
+    {
+      "name": "Verification"
+    }
+  ]
+}

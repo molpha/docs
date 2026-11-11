@@ -1,0 +1,82 @@
+---
+title: "Signed reads"
+sidebarTitle: "Signed reads"
+description: "Have a template signed by the Molpha nodes, paid with your own session, RequestAuth or x402 payment, and verify the result on Solana, EVM or Starknet."
+---
+
+With `attest=true` Molpha Data sends the template's source to the gateway for a round. Molpha Data holds no
+subscription and no funds: you authorize the round, exactly as you would at the gateway.
+
+## Pay for the round
+
+| You send | The round is paid by | Notes |
+| --- | --- | --- |
+| `Authorization: Bearer <token>` | Your subscription | A session from the gateway's [sign-in](/gateways/api/session-create) |
+| `X-Molpha-Consumer-Authority`, `X-Molpha-Auth-Sig`, `X-Molpha-Auth-Timestamp` (and `X-Molpha-Subscription-Owner` for a delegate) | Your subscription | [RequestAuth](/access-models/subscriptions) signs the `sourceId`, so derive it first with `POST /v1/sources/derive` |
+| `PAYMENT-SIGNATURE` | x402, per round | Send nothing first: the gateway's `402` and its `PAYMENT-REQUIRED` header come back unchanged. Pay, then resend |
+
+```ts
+import { MolphaDataClient, requestAuthDigest } from "@molpha/sdk/data";
+
+const data = new MolphaDataClient();
+const request = { template: "lst.rate", params: { chain: "ethereum", token: "0x7f39c581f595b53c5cb19bd0b3f8da6c935e2ca0" } };
+
+// With a sign-in session:
+const signed = await data.readSigned(request, { bearer: sessionToken });
+
+// Or with RequestAuth: derive, sign the digest with the consumer key, send the signature.
+const { sourceId } = await data.derive(request);
+const authTimestamp = Math.floor(Date.now() / 1000);
+const digest = requestAuthDigest({ programId, gatewayPda, sourceId, signatures: 3, authTimestamp });
+const authSig = signEd25519(digest); // your wallet or key
+const signed2 = await data.readSigned(request, { requestAuth: { consumerAuthority, authSig, authTimestamp } });
+```
+
+`programId` and `gatewayPda` come from the gateway's [`GET /v1/info`](/gateways/api/info). Options: `signatures`
+(the quorum, default 3) and `verifierMaxAge` (seconds written into the EVM and Starknet calldata, default 300).
+
+A same-tick duplicate (`409`) and a stale registry version are retried once. Nothing else is retried, because a
+retry is a new round that spends another quota unit or payment.
+
+## What the service checks
+
+Before it answers, the service checks that the gateway signed this source and this quorum, that a snapshot's
+payload hashes to the signed value, and that the aggregate signature verifies against the gateway's node keys
+(`round.check.signature`: `valid`, or `unchecked` for another registry version). A signature that does not verify is
+`502 BAD_ATTESTATION`. These checks are a convenience: the authority is a verifier contract, or Solana's
+`submit_attestation`.
+
+## Verify the result
+
+`verifierArgs` carries what each chain's verifier takes:
+
+| Chain | Field | Use |
+| --- | --- | --- |
+| EVM | `evm.calldata` | A raw `eth_call` to the [verifier](/verifiers/evm): `verify(attestation, maxAge)` returns `(bool, uint8)` |
+| Starknet | `starknet.calldata` | 13 felts for `verify` on the [Starknet verifier](/verifiers/starknet) |
+| Solana | `solana.data`, `solana.coalitionKey` | The whole `submit_attestation` instruction data; or pass the envelope to the SDK (`toAttestation`, then `submitAttestation`) |
+
+`verify` never reverts on a bad attestation: check both the result and its code. `POST /v1/verify` asks the service
+to check an attestation for you, locally and against the verifier contracts it is configured with.
+
+A valid signature does not replace your own policy: check freshness, the `sourceId` you expect, and the quorum.
+
+## Snapshots
+
+`POST /v1/snapshot` and the snapshot templates (`token.snapshot`, `dex.pool.snapshot`) sign `keccak256(payload)`,
+where the payload is up to four raw reads, each cut to a fixed length, concatenated. The response carries the
+`payload`, its `layout`, and `fields` decoded from it by the service. Fields are recomputed, not signed: check
+`keccak256(payload)` against the verified value, then decode the same bytes with the layout
+(`decodePayload` in the SDK). A snapshot is exact mode, so a Solana account written every slot often fails a round.
+
+## Errors
+
+| HTTP | Code | When |
+| --- | --- | --- |
+| 401 | `UNAUTHORIZED` | The gateway refused the session or RequestAuth |
+| 402 | (gateway's body) | x402: the gateway's quote, with `PAYMENT-REQUIRED` |
+| 403 | `SUBSCRIPTION_REFUSED` | Subscription inactive, delegate not allowed, or quota spent |
+| 409 | `DUPLICATE_ROUND` | Still a same-tick duplicate after one retry |
+| 424 | `ASSERTION_FAILED` | The nodes refused the data: the source's own check failed (`stage: "source assertion"`) |
+| 502 | `BAD_ATTESTATION`, `GATEWAY_ERROR` | The gateway signed something else, or failed |
+| 503 | `ROUND_FAILED` | The round did not complete. `likelyDiverged: true` for an exact source over a Solana account: the nodes most likely read different bytes |

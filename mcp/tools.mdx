@@ -76,6 +76,26 @@ Paying sources is off by default and local only. It needs `MOLPHA_SOURCE_PAYER_K
 
 Describe provider values as attested provider quotes: Molpha attests what the endpoint returned, not that the price is correct.
 
+## On-chain data tools
+
+[Molpha Data](/data/overview) templates are tools too: `list_data_templates` lists them, `read_data` reads any of them
+by id (or a raw source), and each template has a tool of its own:
+
+| Tool | Value |
+| --- | --- |
+| `get_token_supply`, `get_balance`, `get_token_snapshot` | Supply; a wallet's balance; supply, decimals and authorities under one signature |
+| `get_pool_price`, `get_median_price`, `get_pool_twap`, `get_pool_reserve`, `get_pool_snapshot`, `get_curve_oracle_price` | Spot price, median of 2 to 4 pools, mean tick, one side's reserve, pool state, Curve EMA |
+| `get_lst_rate`, `get_vault_share_price` | LST exchange rate, ERC-4626 assets per share |
+| `get_aave_reserve`, `get_aave_totals`, `get_aave_health_factor`, `get_aave_liquidation_distance` | Aave v3 and Spark rates, totals, health, distance to liquidation |
+| `get_morpho_market`, `get_morpho_health_factor` | Morpho Blue totals, utilization and health |
+| `compare_oracles`, `reconcile_supply`, `get_chain_head`, `get_storage_slot` | Chainlink or Pyth deviation, bridged supply against its lockbox, pinned block, a storage slot |
+
+They are unsigned by default: the Molpha Data service's own read, with the source it read. With `attest: true` the
+source is derived at the service, re-hashed by the MCP server, and run through `execute_subscription_round` (or
+`execute_x402_round` with `payment: "x402"`), so the dry-run lock and spend caps apply. On the hosted server
+`attest: true` returns the derived `source` to run with the session or x402 tools. Settings: `MOLPHA_DATA_URL`
+(default `https://data.molpha.io`) and `MOLPHA_DATA_API_KEY` (optional).
+
 ## Errors
 
 | Code | Meaning | What to do |
@@ -98,3 +118,5 @@ Describe provider values as attested provider quotes: Molpha attests what the en
 | `authentication_required` | The operation needs a signer or a session | Configure a signer, or sign in with `begin_session` |
 | `submitter_required` | A hosted read needs a wallet address | Pass `submitter` or `payer` |
 | `missing_config`, `invalid_config` | Server configuration is incomplete | Run `npx -y @molpha/mcp doctor` |
+| `invalid_data_request` | Molpha Data refused a template's parameters | Check them with `list_data_templates` |
+| `data_unavailable` | Molpha Data is rate limiting or could not reach a chain | Wait, then call again |
