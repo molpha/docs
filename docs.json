@@ -78,6 +78,14 @@
             ]
           },
           {
+            "group": "Molpha Data",
+            "pages": [
+              "data/overview",
+              "data/templates",
+              "data/signed-reads"
+            ]
+          },
+          {
             "group": "Verify and publish",
             "pages": [
               "verifiers/overview",
@@ -140,6 +148,52 @@
               "gateways/api/providers-list",
               "gateways/api/providers-get",
               "gateways/api/health"
+            ]
+          },
+          {
+            "group": "Molpha Data API",
+            "pages": [
+              "data/api/derive-source",
+              "data/api/read",
+              "data/api/read-batch",
+              "data/api/snapshot",
+              "data/api/verify"
+            ]
+          },
+          {
+            "group": "Data templates",
+            "pages": [
+              "data/api/account-balance",
+              "data/api/chain-head",
+              "data/api/curve-price-oracle",
+              "data/api/dex-pool-price",
+              "data/api/dex-pool-reserves",
+              "data/api/dex-pool-snapshot",
+              "data/api/dex-pool-twap",
+              "data/api/erc4626-share-price",
+              "data/api/evm-storage",
+              "data/api/lending-aave-reserve",
+              "data/api/lending-aave-totals",
+              "data/api/lending-morpho-market",
+              "data/api/lst-rate",
+              "data/api/oracle-compare",
+              "data/api/position-aave-health",
+              "data/api/position-aave-liquidation-distance",
+              "data/api/position-morpho-health",
+              "data/api/price-median",
+              "data/api/supply-reconcile",
+              "data/api/token-snapshot",
+              "data/api/token-supply"
+            ]
+          },
+          {
+            "group": "Data discovery",
+            "pages": [
+              "data/api/get-template",
+              "data/api/health",
+              "data/api/list-chains",
+              "data/api/list-templates",
+              "data/api/openapi"
             ]
           }
         ]

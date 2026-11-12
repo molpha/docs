@@ -1,0 +1,96 @@
+---
+title: "Molpha Data"
+sidebarTitle: "Overview"
+description: "On-chain data as ready-made Molpha sources: token supply, pool prices, LST rates, lending rates, health factors and more, read unsigned or threshold-signed."
+---
+
+<Note>
+  Preview. The hosted service at `data.molpha.io` is not live yet; this section describes the API it will serve.
+  Molpha Data runs against Molpha's testnet: signed reads are signed by testnet nodes that read **mainnet** chains
+  (Ethereum, Base, Solana, Starknet). Say so wherever a signed value is shown.
+</Note>
+
+Molpha Data is a catalog of **templates**. A template turns a few parameters (a chain, a pool, a token, a wallet)
+into a complete Molpha source, so a common on-chain value needs no hand-written source. The same template can be
+read two ways:
+
+| Mode | What you get | Use it to |
+| --- | --- | --- |
+| **Unsigned** (`attest=false`, the default) | The service's own read of the chain: the value, the source it read, the blocks it pinned | Decide: show a price, run a check, explore |
+| **Signed** (`attest=true`) | A round of the same source, threshold-signed by the Molpha nodes, plus verifier arguments for Solana, EVM and Starknet | Settle: put the value in a contract |
+
+Both return the same envelope, so you can decide on one and settle on the other. A signed read is a fresh round, so
+its value can differ from an earlier unsigned one.
+
+## Base URL
+
+| Network | URL |
+| --- | --- |
+| Testnet | `https://data.molpha.io` |
+
+The API is described by [`data-openapi.json`](/data/api/read) (also served at `GET /v1/openapi.json`).
+
+## Read a value
+
+<CodeGroup>
+
+```bash curl
+curl "https://data.molpha.io/v1/ethereum/pools/0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640/price?invert=true"
+```
+
+```ts SDK
+import { MolphaDataClient } from "@molpha/sdk/data";
+
+const data = new MolphaDataClient();
+const env = await data.read({
+  template: "dex.pool.price",
+  params: { chain: "ethereum", pool: "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640", invert: "true" },
+});
+console.log(env.data.value, env.facts?.quote);
+```
+
+</CodeGroup>
+
+Every template has a typed endpoint (`/v1/{chain}/pools/{pool}/price` above) and can also be read by id with
+`POST /v1/read`. [The template catalog](/data/templates) lists them all.
+
+## The envelope
+
+| Field | Meaning | Signed? |
+| --- | --- | --- |
+| `template`, `params`, `facts` | The template, the normalized parameters, and what the template read when it built the source (decimals, pool tokens) | No |
+| `data` | `value` (rendered), `encoded` (the 32 bytes a node signs), `type`, `decimals` | `encoded` is |
+| `source` | `sourceId` and `config`: the canonical source document. `sourceId` is the keccak256 of its canonical bytes, so anyone can check exactly what was read | Yes, by ID |
+| `read` | `chain`, `timestampMs`, pinned `blocks`, `finality`, `observedAt`, `cached` | No |
+| `attestation`, `signature` | The signed artifact, unchanged from the gateway | Yes |
+| `verifierArgs`, `round` | Calldata for each chain's verifier, the round ID and how it was paid | No |
+| `payload`, `layout`, `fields` | For a snapshot: the signed preimage, its layout, and the service's decoding of it | `payload` is, as keccak256 |
+
+Re-hash `source.config` before you trust `sourceId`: the SDK's data client does it for you and refuses a source that
+does not match.
+
+## Finality
+
+Finality is part of the source, so it is part of the `sourceId`. Two profiles cover most uses:
+
+| Profile | Ethereum | Base | Starknet | Solana |
+| --- | --- | --- | --- | --- |
+| `final` (default) | `finalized` (about 20 minutes old) | 60 confirmations | 100 confirmations | `finalized` |
+| `fast` | 3 confirmations | 18 confirmations | 6 confirmations | `confirmed` |
+
+A raw mode (`finalized`, `safe`, `confirmations:<n>`, `confirmed`) is accepted too. `GET /v1/chains` reports what
+each profile resolves to on every served chain.
+
+## Limits and errors
+
+Unsigned reads are rate limited per client address; an API key (`X-API-Key`) gets a higher limit. All requests for
+one source in one second share a single read. Errors are `{"error": {code, message, stage?}}` with stable codes:
+`PARAM_INVALID` and `READ_FAILED` (422: the parameters name something else), `ASSERTION_FAILED` (424: the chain's
+data failed the source's own check), `RPC_UNAVAILABLE`, `ROUND_FAILED` and `BUSY` (503, with `Retry-After`), and for
+signed reads the gateway's answers mapped to `UNAUTHORIZED`, `SUBSCRIPTION_REFUSED`, `DUPLICATE_ROUND` and the
+unchanged x402 `402`. See [Signed reads](/data/signed-reads).
+
+## Not offered
+
+There is no USD: every price names its quote token. Events, transaction status, historical state and indexed
+statistics (volume, holders, OHLCV) are out of scope. The catalog lists what each template cannot do in its caveats.

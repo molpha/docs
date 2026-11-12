@@ -84,6 +84,18 @@ const wallet = {
 
 The `as MolphaWallet` assertion is needed because the Anchor `Wallet` type declares `payer`. A wallet with neither `payer` nor `signAuthMessage` sends an all-zero auth signature, which the gateway rejects with HTTP 401.
 
+## Molpha Data
+
+`@molpha/sdk/data` is a browser-safe client for [Molpha Data](/data/overview): the template catalog, unsigned reads,
+and signed reads paid with your session, RequestAuth or x402 payment. It re-hashes every source the service returns
+and checks a signed envelope's attestation and verifier calldata before handing it over.
+
+```ts
+import { MolphaDataClient } from "@molpha/sdk/data";
+
+const env = await new MolphaDataClient().read({ template: "token.supply", params: { chain: "base", token: usdc } });
+```
+
 <CardGroup cols={3}>
   <Card title="Backend quickstart" href="/quickstarts/backend">
     Subscribe, request and submit end to end.
